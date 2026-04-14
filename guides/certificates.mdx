@@ -1,0 +1,157 @@
+---
+title: "Store and manage X.509 certificates on smart cards"
+description: "Store, read, list, and delete X.509 certificates on smart cards using OpenSC tools, and generate certificate signing requests with the PKCS#11 engine."
+---
+
+Smart cards can hold X.509 certificates alongside the private keys they correspond to, making the card a self-contained credential store. OpenSC provides several tools for working with certificates: `pkcs15-tool` and `pkcs11-tool` for reading and listing, and `pkcs15-init` for writing, updating, and deleting. You can also use the OpenSSL PKCS#11 engine to sign certificate signing requests directly with a key that never leaves the card.
+
+## Listing certificates
+
+<Tabs>
+  <Tab title="pkcs15-tool">
+    ```bash
+    pkcs15-tool --list-certificates
+    ```
+
+    Example output:
+
+    ```
+    X.509 Certificate [My Certificate]
+            Object Flags   : [0x0]
+            Authority      : no
+            Path           : 3f005015450
+            ID             : 01
+            Encoded serial : 02 01 01
+    ```
+  </Tab>
+  <Tab title="pkcs11-tool">
+    ```bash
+    pkcs11-tool --list-objects --type cert
+    ```
+
+    This lists all certificate objects visible through the PKCS#11 interface, which is useful for checking what an application will see when it opens the token.
+  </Tab>
+</Tabs>
+
+## Reading a certificate
+
+Export a certificate from the card to a PEM file. Use the ID shown in the listing output.
+
+```bash
+pkcs15-tool --read-certificate 01 > cert.pem
+```
+
+To inspect the retrieved certificate with OpenSSL:
+
+```bash
+openssl x509 -in cert.pem -text -noout
+```
+
+### DER vs PEM format
+
+Certificates on the card are stored in DER (binary) format internally. `pkcs15-tool` returns PEM (base64-encoded) by default. To work with the raw DER bytes:
+
+```bash
+# Read as DER
+pkcs15-tool --read-certificate 01 --output-format DER > cert.der
+
+# Convert DER to PEM with OpenSSL
+openssl x509 -in cert.der -inform DER -out cert.pem
+```
+
+## Storing a certificate
+
+Upload a PEM-encoded X.509 certificate to the card. The PKCS#15 structure must already be initialized (see [Initialize a smart card](/guides/card-init)).
+
+```bash
+pkcs15-init --store-certificate cert.pem --id 01 --label "My Cert"
+```
+
+Omit `--id` to let the middleware calculate an intrinsic ID from the certificate's public key. This ID will automatically match the corresponding key pair if one was generated or imported with the same approach.
+
+To mark a certificate as a CA certificate:
+
+```bash
+pkcs15-init --store-certificate ca.pem --label "CA Cert" --authority
+```
+
+To update an existing certificate object in place:
+
+```bash
+pkcs15-init --update-certificate renewed.pem --id 01
+```
+
+<Warning>
+Take extra care when updating mail decryption certificates. If the replacement certificate does not match the stored private key, encrypted messages protected by the old certificate may become permanently unreadable.
+</Warning>
+
+## Deleting objects
+
+The `--delete-objects` option accepts a comma-separated list of object types. Always supply `--id` to identify the specific object.
+
+```bash
+# Delete a certificate
+pkcs15-init --delete-objects cert --id 01
+
+# Delete a private key
+pkcs15-init --delete-objects privkey --id 01
+
+# Delete a certificate chain starting from a given ID
+pkcs15-init --delete-objects chain --id 01
+```
+
+Valid object types: `privkey`, `pubkey`, `secrkey`, `cert`, `chain`, `data`.
+
+<Note>
+When deleting a `data` object, use `--application-id` instead of `--id`.
+</Note>
+
+## Key pair generation on-card vs. importing external keys
+
+OpenSC supports both approaches:
+
+<CardGroup cols={2}>
+  <Card title="Generate on-card" icon="microchip">
+    The private key is generated inside the card's secure element and never exists outside it. This is the most secure option and is recommended when your card supports it.
+
+    ```bash
+    pkcs15-init --generate-key rsa/2048 --auth-id 01
+    ```
+  </Card>
+  <Card title="Import external key" icon="file-import">
+    Generate the key elsewhere (e.g., with OpenSSL) and upload it. The private key is transmitted to the card, so ensure you are using a trusted system.
+
+    ```bash
+    pkcs15-init --store-private-key key.pem --auth-id 01
+    ```
+  </Card>
+</CardGroup>
+
+When you generate or import a private key, `pkcs15-init` automatically stores the corresponding public key as a PKCS#15 public key object. If the input is a PKCS#12 file containing a certificate, the certificate is stored instead of the raw public key.
+
+## Generating a CSR using the card key
+
+You can sign a Certificate Signing Request (CSR) with a private key stored on the card, so the key material never touches the host filesystem. Use the OpenSSL PKCS#11 engine (from `libengine-pkcs11-openssl` or equivalent):
+
+```bash
+# List available token slots to find your URI
+pkcs11-tool --list-slots
+
+# Generate CSR signed by the on-card key
+openssl req -engine pkcs11 \
+  -keyform engine \
+  -key "pkcs11:token=MyToken;id=%01;type=private" \
+  -new \
+  -out request.csr \
+  -subj "/CN=My Name/O=My Org/C=US"
+```
+
+Once your CA has signed the CSR and returned a certificate, store it on the card:
+
+```bash
+pkcs15-init --store-certificate signed.pem --id 01 --label "My Cert"
+```
+
+<Note>
+The `pkcs11:` URI format follows RFC 7512. The `id` component is percent-encoded; `%01` corresponds to the hex ID `01`. Adjust the URI to match your token label and key ID.
+</Note>

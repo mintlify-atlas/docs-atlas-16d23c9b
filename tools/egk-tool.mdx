@@ -1,0 +1,75 @@
+---
+title: "egk-tool: read German electronic health card data"
+description: "Use egk-tool to display patient and insurance data stored on the German elektronische Gesundheitskarte (eGK) health card in XML format."
+---
+
+`egk-tool` reads and displays data stored on the German elektronische Gesundheitskarte (eGK) — the electronic health card used by German statutory health insurers. The tool extracts patient demographic and insurance data from the card's Health Care Application (HCA) and outputs it in XML format for inspection or downstream processing.
+
+<Note>
+  The eGK card does not use PKCS#15 or PKCS#11 structures. Data is stored in proprietary XML files within the card's Health Care Application. Use `egk-tool` rather than `pkcs15-tool` or `pkcs11-tool` when working with eGK cards.
+</Note>
+
+## Reading health card data
+
+Connect the eGK card to a PC/SC reader and run one or more of the following options:
+
+```bash
+# Show personal insurance data (Persönliche Versichertendaten)
+egk-tool --pd
+
+# Show general insurance data (Allgemeine Versichertendaten)
+egk-tool --vd
+
+# Show protected insurance data (Geschützte Versichertendaten)
+egk-tool --gvd
+
+# Show insurance master data status (Versichertenstammdaten-Status)
+egk-tool --vsd-status
+```
+
+Each option reads the corresponding XML data group from the HCA and prints it to standard output. You can redirect the output to a file for further processing:
+
+```bash
+egk-tool --pd > persoenliche_versichertendaten.xml
+egk-tool --vd > allgemeine_versichertendaten.xml
+```
+
+## Selecting a reader
+
+By default, `egk-tool` uses the first reader with a card present. To use a specific reader:
+
+```bash
+# Use reader at index 1
+egk-tool --pd --reader 1
+
+# Select a reader by ATR
+egk-tool --pd --reader "3B:XX:..."
+```
+
+## Increasing verbosity
+
+```bash
+# Standard verbose output
+egk-tool --pd --verbose
+
+# Debug-level output from the OpenSC library
+egk-tool --pd --verbose --verbose
+```
+
+## Options reference
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--pd` | | Show personal insurance data (Persönliche Versichertendaten) as XML |
+| `--vd` | | Show general insurance data (Allgemeine Versichertendaten) as XML |
+| `--gvd` | | Show protected insurance data (Geschützte Versichertendaten) as XML |
+| `--vsd-status` | | Show insurance master data status |
+| `--reader` _arg_ | `-r` | Reader number or ATR to use |
+| `--verbose` | `-v` | Increase verbosity; repeat for library debug output |
+| `--version` | `-V` | Print version and exit |
+| `--help` | `-h` | Print help and exit |
+
+## See also
+
+- [`opensc-tool`](/tools/opensc-tool) — Inspect card ATR and send raw APDUs to the eGK
+- [`hardware/national-eid`](/hardware/national-eid) — Overview of German health card and other national eID cards supported by OpenSC

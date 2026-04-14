@@ -1,0 +1,194 @@
+---
+title: "OpenSC on Linux: install, configure, and use"
+description: "Install OpenSC on Ubuntu, Fedora, Arch Linux, and other distributions, then set up pcscd and use smart cards for SSH and browser authentication."
+---
+
+OpenSC is packaged for all major Linux distributions. Alongside the OpenSC package itself, you need the PC/SC daemon (`pcscd`) running to relay commands between the operating system and the physical smart card reader. Once both are in place, the PKCS#11 module and command-line tools work across SSH, Firefox, Chromium, and any other PKCS#11-aware application.
+
+## Install OpenSC and pcscd
+
+<CodeGroup>
+
+```bash Ubuntu / Debian
+sudo apt-get update
+sudo apt-get install opensc pcscd
+```
+
+```bash Fedora / RHEL
+sudo dnf install opensc pcsc-lite
+```
+
+```bash Arch Linux
+sudo pacman -S opensc ccid
+```
+
+</CodeGroup>
+
+<Note>
+The `pcscd` package name may vary. On Debian/Ubuntu it is `pcscd`; on Fedora/RHEL it is included in the `pcsc-lite` package. Arch Linux users typically need the `ccid` driver package for USB CCID readers.
+</Note>
+
+## Start and enable pcscd
+
+The PC/SC daemon must be running for OpenSC to communicate with your reader. Enable and start it with systemd:
+
+```bash
+sudo systemctl enable pcscd
+sudo systemctl start pcscd
+```
+
+Verify pcscd is active:
+
+```bash
+sudo systemctl status pcscd
+```
+
+<Warning>
+If `pcscd` is not running, all OpenSC commands that require reader access will fail with an error such as `No smart card readers found`. Always confirm the daemon is running before troubleshooting card detection issues.
+</Warning>
+
+## Verify the installation
+
+Open a new terminal and check that OpenSC is installed:
+
+```bash
+opensc-tool --info
+```
+
+List all connected smart card readers:
+
+```bash
+opensc-tool --list-readers
+```
+
+## Inspect a smart card
+
+Insert your smart card and query its contents:
+
+```bash
+# List certificates stored on the card
+pkcs15-tool --list-certificates
+
+# List all objects (certificates, keys, PINs, data)
+pkcs15-tool --dump
+
+# List objects via the PKCS#11 interface
+pkcs11-tool --list-objects
+
+# Print the card name (detected driver)
+opensc-tool --name
+
+# Print the card ATR in hex
+opensc-tool --atr
+```
+
+## SSH authentication with a smart card
+
+You can use a private key stored on your smart card to authenticate SSH sessions. Pass the OpenSC PKCS#11 module to `ssh` with the `-I` flag:
+
+```bash
+ssh -I /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so user@host
+```
+
+The library path varies by distribution and architecture:
+
+| Distribution | Path |
+|---|---|
+| Ubuntu/Debian (x86_64) | `/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so` |
+| Fedora/RHEL | `/usr/lib64/opensc-pkcs11.so` |
+| Arch Linux | `/usr/lib/opensc-pkcs11.so` |
+
+<Tip>
+Add the module to `~/.ssh/config` to avoid specifying it each time:
+
+```
+PKCS11Provider /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so
+```
+
+Adjust the path to match your distribution.
+</Tip>
+
+To retrieve the public key from the card for placement in `~/.ssh/authorized_keys`:
+
+```bash
+pkcs15-tool --read-ssh-key 01
+```
+
+## Register the PKCS#11 module in Firefox
+
+Firefox uses an NSS database for its certificate and security device store. Use `modutil` (from the `libnss3-tools` package on Debian/Ubuntu, or `nss-tools` on Fedora) to register the OpenSC module:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libnss3-tools
+
+# Fedora/RHEL
+sudo dnf install nss-tools
+```
+
+Register the module in your Firefox profile's NSS database:
+
+```bash
+modutil -dbdir sql:$HOME/.mozilla/firefox/*.default-release \
+  -add "OpenSC" \
+  -libfile /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so
+```
+
+Restart Firefox after registration. The smart card token should now appear under **Settings → Privacy & Security → Security Devices**.
+
+## Register the PKCS#11 module in Chromium
+
+Chromium on Linux also uses NSS. Register the module in the shared NSS database:
+
+```bash
+mkdir -p $HOME/.pki/nssdb
+certutil -d sql:$HOME/.pki/nssdb -N --empty-password
+
+modutil -dbdir sql:$HOME/.pki/nssdb \
+  -add "OpenSC" \
+  -libfile /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so
+```
+
+Restart Chromium after registration.
+
+## udev rules for non-root reader access
+
+By default, USB smart card readers are accessible only to `root` and the `pcscd` daemon. To allow your user account to access the reader directly (needed for some tools and configurations), add a udev rule.
+
+OpenSC ships a set of udev rules that are typically installed automatically by the distribution package. Verify they are present:
+
+```bash
+ls /usr/lib/udev/rules.d/ | grep -i opensc
+ls /etc/udev/rules.d/ | grep -i opensc
+```
+
+If no rules are found, the OpenSC source tree provides them. After adding a rule file, reload udev:
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+<Note>
+Most users do not need to configure udev rules manually. If `pkcs11-tool --list-slots` works correctly after starting `pcscd`, your setup is already functional.
+</Note>
+
+## Run a functional test
+
+To verify the full stack — reader, pcscd, and PKCS#11 — run the built-in token test:
+
+```bash
+pkcs11-tool --test --login
+```
+
+List all slots (including empty ones) to confirm reader detection:
+
+```bash
+pkcs11-tool --list-slots
+```
+
+List only slots with inserted tokens:
+
+```bash
+pkcs11-tool --list-token-slots
+```

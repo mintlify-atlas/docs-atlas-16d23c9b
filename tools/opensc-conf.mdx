@@ -1,0 +1,344 @@
+---
+title: "opensc.conf: OpenSC configuration reference"
+description: "Configure OpenSC behavior through opensc.conf, including reader drivers, per-card ATR settings, debug logging, and PKCS#11 module parameters."
+---
+
+`opensc.conf` is the central configuration file for OpenSC. It controls nearly every aspect of the library's behavior: which card drivers load, how readers are accessed, how debug output is written, and how PKCS#11 slots are exposed to applications. Most deployments work without touching this file, but it becomes essential when adding support for a card not recognized by default, tuning reader behavior, or enabling diagnostic logging.
+
+## Configuration sources
+
+OpenSC resolves configuration from the following sources in order, with earlier sources taking precedence:
+
+1. Command-line options
+2. Environment variables
+3. Windows registry (`HKEY_CURRENT_USER`, then `HKEY_LOCAL_MACHINE`)
+4. System-wide configuration file
+
+## File locations
+
+<Tabs>
+  <Tab title="Linux">
+    ```
+    /etc/opensc.conf
+    ~/.config/opensc/opensc.conf
+    ```
+  </Tab>
+  <Tab title="macOS">
+    ```
+    /Library/OpenSC/etc/opensc.conf
+    ```
+  </Tab>
+  <Tab title="Windows">
+    ```
+    %PROGRAMFILES%\OpenSC Project\OpenSC\opensc.conf
+    ```
+  </Tab>
+</Tabs>
+
+## File format
+
+The configuration file is composed of named blocks using a `key { ... }` syntax. Block contents consist of key-value pairs (terminated with `;`) and nested blocks. Comments start with `#`.
+
+```conf
+# This is a comment
+key, name {
+    option = value;
+    nested_block {
+        another_option = value;
+    }
+}
+```
+
+At the root level, `opensc.conf` contains one or more `app` blocks. The `default` application block provides fallback settings for all applications:
+
+```conf
+app default {
+    debug = 3;
+    debug_file = /var/log/opensc.log;
+}
+```
+
+Named application blocks override the defaults for specific programs:
+
+```conf
+app opensc-pkcs11 {
+    pkcs11 {
+        lock_login = true;
+    }
+}
+
+app "C:\Program Files\MyApp\myapp.exe" {
+    pkcs11 {
+        slots_per_card = 1;
+    }
+}
+```
+
+Recognized application names include `default`, `opensc-pkcs11`, `onepin-opensc-pkcs11`, `cardmod`, and any of the OpenSC command-line tools (`pkcs15-tool`, `pkcs11-tool`, `opensc-explorer`, etc.).
+
+## Global options
+
+These options are placed inside an `app` block.
+
+### Debug settings
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `debug = N;` | `0` | Debug verbosity level. Higher values produce more output. |
+| `debug_file = path;` | `stderr` | File to write debug output to. Use `stdout` or `stderr` for standard streams. |
+| `disable_colors = bool;` | auto | Disable colored log output. Defaults to `false` when attached to a console. |
+
+<Tip>
+Set the `OPENSC_DEBUG` environment variable to temporarily override the `debug` level without editing the config file. For example: `OPENSC_DEBUG=9 pkcs15-tool -l`
+</Tip>
+
+### Card and driver options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `card_drivers = name, ...;` | `internal` | Allowlist of card drivers to load. `internal` loads all built-in drivers. Use `opensc-tool --list-drivers` to see available names. The `OPENSC_DRIVER` environment variable overrides this. |
+| `ignored_readers = name, ...;` | empty | Reader names (or substrings) to ignore. Case-sensitive, partial matching supported. |
+| `enable_default_driver = bool;` | `false` | Enable the generic fallback card driver. Automatically enabled for `opensc-explorer` and `opensc-tool`. |
+| `disable_popups = bool;` | `false` | Suppress built-in GUI dialogs. |
+| `profile_dir = path;` | system default | Directory for PKCS#15 initialization profiles used by `pkcs15-init`. |
+| `disable_hw_pkcs1_padding = value;` | `decipher` | Control hardware PKCS#1 v1.5 padding. Values: `no`, `sign`, `decipher`, `both`. |
+| `openssl_config = path;` | empty | Path to an OpenSSL configuration file loaded into OpenSC's library context. Useful for enabling FIPS providers without rebuilding OpenSC. |
+
+## Reader driver configuration
+
+Reader drivers are configured with `reader_driver NAME { ... }` blocks. Two options apply to all drivers:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `max_send_size = N;` | `255` | Maximum APDU command size in bytes. |
+| `max_recv_size = N;` | `256` | Maximum APDU response size in bytes. |
+
+### PC/SC (`reader_driver pcsc`)
+
+The PC/SC driver is used on Linux (via `pcscd`), macOS, and Windows.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `connect_exclusive = bool;` | `false` | Connect to the reader in exclusive mode. No effect on Windows minidriver. |
+| `disconnect_action = action;` | `leave` | Action on `SCardDisconnect`. Values: `leave`, `reset`, `unpower`. |
+| `transaction_end_action = action;` | `leave` | Action on `SCardEndTransaction`. Values: `leave`, `reset`, `unpower`. |
+| `reconnect_action = action;` | `leave` | Action on `SCardReconnect`. Values: `leave`, `reset`, `unpower`. |
+| `enable_pinpad = bool;` | `true` | Enable pinpad support (PC/SC v2.0.2 Part 10). |
+| `fixed_pinlength = N;` | `0` | Force a fixed PIN length for readers that require it. `0` means not fixed. |
+| `enable_escape = bool;` | `false` | Detect reader capabilities via escape commands (BSI TR-03119). |
+| `provider_library = path;` | system default | Use a specific PC/SC provider library. |
+
+```conf
+reader_driver pcsc {
+    max_send_size = 65535;
+    max_recv_size = 65536;
+    enable_pinpad = true;
+    connect_exclusive = false;
+}
+```
+
+### CT-API (`reader_driver ctapi`)
+
+```conf
+reader_driver ctapi {
+    module /usr/lib/libtowitoko.so {
+        ports = 0;
+    }
+}
+```
+
+### OpenCT (`reader_driver openct`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `readers = N;` | `2` | Number of virtual readers to allocate. |
+
+### CryptoTokenKit (`reader_driver cryptotokenkit`)
+
+Used on macOS. Supports `max_send_size` and `max_recv_size`.
+
+## ATR-based card configuration
+
+The `card_atr` block lets you configure cards not in the built-in driver list, or override settings for existing cards. The block key is the card's ATR as a hex string with colon separators (case-sensitive).
+
+```conf
+card_atr 3b:f0:0d:ca:fe {
+    driver    = "flex";
+    atrmask   = "ff:ff:ff:ff:ff";
+    name      = "My CryptoFlex card";
+    flags     = "rng", "keep_alive";
+}
+```
+
+### ATR block options
+
+| Option | Description |
+|--------|-------------|
+| `driver = name;` | Force a specific card driver. Overrides built-in card lists. |
+| `atrmask = hexstring;` | Mask ANDed with the card ATR before comparison. Allows one block to match multiple ATR variants. |
+| `name = string;` | Display name for the card. |
+| `type = N;` | Internal numeric type used by the driver. See `cards.h` in the source. |
+| `flags = value, ...;` | Card capability flags ORed together. Named flags: `rng` (on-board RNG), `keep_alive` (re-select applet before each transaction). |
+| `pkcs15emu = name;` | Force a specific PKCS#15 emulation driver. Required for external drivers. |
+| `force_protocol = value;` | Force smart card protocol. Values: `t0`, `t1`, `raw`. |
+| `read_only = bool;` | Mark card as read-only in PKCS#11/Minidriver interface. Default: `false`. |
+| `md_supports_X509_enrollment = bool;` | Indicate X.509 enrollment support to the Windows Minidriver. |
+| `md_supports_container_key_gen = bool;` | Card can generate key pairs on-chip. |
+| `md_supports_container_key_import = bool;` | Card allows importing private keys. |
+
+<Note>
+ATR strings in `card_atr` blocks are case-sensitive. Use lowercase hex digits as shown in the examples.
+</Note>
+
+### Example: Yubikey with PIV driver
+
+```conf
+card_atr 3b:f8:13:00:00:81:31:fe:15:59:75:62:69:6b:65:79:34:d4 {
+    name   = "Yubikey 4";
+    driver = "PIV-II";
+    flags  = "keep_alive";
+}
+```
+
+### Example: Card with ATR mask
+
+```conf
+card_atr 3b:84:80:01:47:6f:49:44:00 {
+    atrmask       = "FF:FF:FF:FF:FF:FF:FF:FF:00";
+    driver        = "sc-hsm";
+    force_protocol = "t1";
+    read_only     = true;
+    md_supports_container_key_gen = true;
+}
+```
+
+## Card driver configuration
+
+Named card drivers can have their own configuration blocks with driver-specific settings.
+
+### German ID card (`card_driver npa`)
+
+| Option | Description |
+|--------|-------------|
+| `can = value;` | Card Access Number required for QES PIN verification. Prompted interactively if not set. |
+| `st_dv_certificate = path;` | DV certificate for signature terminal (development use). |
+| `st_certificate = path;` | ST certificate (development use). |
+| `st_key = path;` | ST private key (development use). |
+
+### Spanish DNIe (`card_driver dnie`)
+
+| Option | Description |
+|--------|-------------|
+| `user_consent_enabled = bool;` | Show a consent dialog before signature operations. Requires `--enable-dnie-ui` at build time. |
+| `user_consent_app = path;` | Pinentry application for the consent dialog. Default: `/usr/bin/pinentry`. |
+
+### Polish eID (`card_driver edo`), Slovenian eID (`card_driver eoi`), D-Trust (`card_driver dtrust`)
+
+These drivers all support a `can = value;` option for the Card Access Number printed on the card. The `EDO_CAN`, `EOI_CAN`, and `DTRUST_CAN` environment variables can override this setting respectively.
+
+The D-Trust driver additionally supports:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `can_use_cache = bool;` | `true` | Cache the CAN in `file_cache_dir` after first entry to avoid future prompts. |
+
+### External card driver
+
+```conf
+card_driver customcos {
+    module = /usr/lib/libcard_customcos.so;
+}
+```
+
+## PKCS#15 framework configuration
+
+The `framework pkcs15 { ... }` block controls PKCS#15 card handling.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `use_file_caching = value;` | `public` (for static cards) | Cache card files on disk. Values: `yes`, `public`, `no`. |
+| `file_cache_dir = path;` | `$HOME/.cache/opensc/` | Directory for cached card files. |
+| `use_pin_caching = bool;` | `true` | Cache PIN values in memory. |
+| `pin_cache_counter = N;` | `10` | How many times to use a cached PIN before re-authenticating. |
+| `pin_cache_ignore_user_consent = bool;` | `false` | Skip `CKA_ALWAYS_AUTHENTICATE` checks. Useful for older PKCS#11 applications. |
+| `pin_protected_certificate = value;` | `protect` | Handling of PIN-protected certificates. Values: `protect`, `declassify`, `ignore`. |
+| `enable_pkcs15_emulation = bool;` | `true` | Enable PKCS#15 emulation layer. |
+| `try_emulation_first = bool;` | `false` | Prefer emulation over native PKCS#15 parsing. |
+| `enable_builtin_emulation = bool;` | `true` | Enable built-in emulators. |
+| `builtin_emulators = list;` | `internal` | Which built-in emulators to try. `internal` tries all active ones; `old` tries deprecated ones. |
+| `pkcs11_enable_InitToken = bool;` | `false` | Allow card initialization via the PKCS#11 `C_InitToken` call. |
+
+<Warning>
+Cached files may contain personal data (name, email address). If caching is performed by a system process, ensure the cache directory is accessible to the user account that needs it.
+</Warning>
+
+## PKCS#11 module configuration
+
+The `pkcs11 { ... }` block (inside `app opensc-pkcs11`) controls the PKCS#11 module.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `max_virtual_slots = N;` | `16` | Maximum total virtual slots exposed to applications. |
+| `slots_per_card = N;` | `4` | Maximum PIN slots per card. Browsers like Firefox and Chrome default to `1`. |
+| `lock_login = bool;` | `false` | Lock the card exclusively after `C_Login`. More secure but prevents concurrent application access. |
+| `atomic = bool;` | `false` | Track login state and perform a logout after every transaction. Implies `lock_login`. Incompatible with pinpad readers. |
+| `user_pin_unblock_style = value;` | `none` | How PIN unblock is exposed via PKCS#11. Values: `none`, `set_pin_in_unlogged_session`, `set_pin_in_specific_context`, `init_pin_in_so_session`. |
+| `create_puk_slot = bool;` | `false` | Create a PKCS#11 slot for the PUK. May cause issues with Firefox and Thunderbird. |
+| `create_slots_for_pins = list;` | `all` | Comma-separated list of PIN roles to create slots for. Values: `user`, `sign`, `all`. |
+
+## Complete example
+
+The following is a working `opensc.conf` showing the most commonly needed settings:
+
+```conf
+# OpenSC configuration file
+
+app default {
+    # Uncomment to enable debug output
+    # debug = 3;
+    # debug_file = /tmp/opensc-debug.log;
+
+    # Reader driver configuration
+    reader_driver pcsc {
+        max_send_size = 65535;
+        max_recv_size = 65536;
+        enable_pinpad = true;
+    }
+
+    # Ignore a specific reader by name substring
+    # ignored_readers = "Virtual Reader";
+
+    # Force a card to use a specific driver by ATR
+    card_atr 3b:f8:13:00:00:81:31:fe:15:59:75:62:69:6b:65:79:34:d4 {
+        name   = "Yubikey 4";
+        driver = "PIV-II";
+        flags  = "keep_alive";
+    }
+
+    # PKCS#15 framework
+    framework pkcs15 {
+        use_file_caching = public;
+        use_pin_caching  = true;
+        pin_cache_counter = 10;
+    }
+}
+
+# PKCS#11 module settings
+app opensc-pkcs11 {
+    pkcs11 {
+        lock_login    = false;
+        slots_per_card = 4;
+    }
+}
+```
+
+## Environment variables
+
+| Variable | Effect |
+|----------|--------|
+| `OPENSC_DEBUG` | Overrides the `debug` level in the config file. |
+| `OPENSC_DRIVER` | Overrides the `card_drivers` list. |
+| `EDO_CAN` | CAN for the Polish eID card driver. |
+| `EOI_CAN` | CAN for the Slovenian eID card driver. |
+| `DTRUST_CAN` | CAN for D-Trust signature card driver. |
+| `LTEID_CAN` | CAN for the Lithuanian ID card driver. |

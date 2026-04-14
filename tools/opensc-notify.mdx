@@ -1,0 +1,182 @@
+---
+title: "opensc-notify: desktop smart card event notifications"
+description: "Use opensc-notify to monitor smart card events and deliver desktop notifications on Linux and macOS when a card is inserted, removed, or a PIN is verified."
+---
+
+`opensc-notify` monitors smart card events and sends desktop notifications when a card is inserted, removed, or when a PIN verification succeeds or fails. On Linux it integrates with desktop notification systems (such as those using `libnotify`), and on macOS it appears in the menu bar and uses the native notification center. Running it as a background service lets you receive real-time alerts about card state changes without polling manually.
+
+## Synopsis
+
+```bash
+opensc-notify [OPTIONS]
+```
+
+## Options
+
+### General options
+
+| Option | Short | Description |
+|---|---|---|
+| `--help` | `-h` | Print help and exit. |
+| `--version` | `-V` | Print version and exit. |
+
+### Customized mode
+
+Send a single notification with custom content, then exit.
+
+| Option | Short | Description |
+|---|---|---|
+| `--title [STRING]` | `-t [STRING]` | Specify the title of the notification. |
+| `--message [STRING]` | `-m [STRING]` | Specify the main text of the notification. |
+
+### Standard mode
+
+Manually trigger one of the built-in notification types. These correspond to the notification settings in `opensc.conf`.
+
+| Option | Short | Description |
+|---|---|---|
+| `--notify-card-inserted` | `-I` | Send the "card inserted" notification. Corresponds to `notify_card_inserted` in `opensc.conf` (default: off). |
+| `--notify-card-removed` | `-R` | Send the "card removed" notification. Corresponds to `notify_card_removed` in `opensc.conf` (default: off). |
+| `--notify-pin-good` | `-G` | Send the "PIN verified successfully" notification. Corresponds to `notify_pin_good` in `opensc.conf` (default: off). |
+| `--notify-pin-bad` | `-B` | Send the "PIN verification failed" notification. Corresponds to `notify_pin_bad` in `opensc.conf` (default: off). |
+
+<Note>
+The standard notification types (`-I`, `-R`, `-G`, `-B`) are off by default. Enable them in `opensc.conf` to have `opensc-notify` send them automatically when the corresponding events occur during normal card use.
+</Note>
+
+## Examples
+
+### Send a custom notification
+
+```bash
+opensc-notify --title "Smart Card" --message "Card ready for use."
+```
+
+### Manually trigger a card-inserted notification
+
+```bash
+opensc-notify --notify-card-inserted
+```
+
+### Manually trigger a PIN failure notification
+
+```bash
+opensc-notify --notify-pin-bad
+```
+
+### Run as a background monitor
+
+Start `opensc-notify` in the background to receive continuous event notifications:
+
+```bash
+opensc-notify &
+```
+
+Press `Ctrl+C` or send `SIGTERM` to stop it.
+
+## Running as a background service
+
+For persistent monitoring, configure `opensc-notify` to start automatically with your desktop session.
+
+### macOS: LaunchAgent
+
+Create a LaunchAgent plist so that `opensc-notify` starts at login:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+```
+
+```xml
+<!-- ~/Library/LaunchAgents/org.opensc.notify.plist -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>org.opensc.notify</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/opensc-notify</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+```
+
+Load it immediately without logging out:
+
+```bash
+launchctl load ~/Library/LaunchAgents/org.opensc.notify.plist
+```
+
+To stop and remove the agent:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/org.opensc.notify.plist
+```
+
+<Tip>
+On macOS, `opensc-notify` may appear as a menu bar item when running. Check **System Settings → Notifications** to control how OpenSC notifications are displayed.
+</Tip>
+
+### Linux: systemd user service
+
+Create a systemd user service unit:
+
+```bash
+mkdir -p ~/.config/systemd/user
+```
+
+```ini
+# ~/.config/systemd/user/opensc-notify.service
+[Unit]
+Description=OpenSC smart card event notifications
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/opensc-notify
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Enable and start the service:
+
+```bash
+systemctl --user enable --now opensc-notify.service
+```
+
+Check its status:
+
+```bash
+systemctl --user status opensc-notify.service
+```
+
+### Linux: XDG autostart
+
+If you prefer a desktop-environment-agnostic approach, place a `.desktop` file in the XDG autostart directory:
+
+```ini
+# ~/.config/autostart/opensc-notify.desktop
+[Desktop Entry]
+Type=Application
+Name=OpenSC Notify
+Exec=opensc-notify
+X-GNOME-Autostart-enabled=true
+```
+
+This works with GNOME, KDE, XFCE, and other XDG-compliant desktop environments.
+
+<Warning>
+Only run one instance of `opensc-notify` at a time. Starting multiple instances can result in duplicate notifications for each card event.
+</Warning>
+
+## See also
+
+- [`opensc-tool`](/tools/opensc-tool) — low-level smart card utility for reader and card diagnostics
+- [`opensc-explorer`](/tools/opensc-explorer) — interactive smart card file system browser

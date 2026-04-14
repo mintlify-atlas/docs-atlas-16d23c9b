@@ -1,0 +1,412 @@
+---
+title: "PKCS#15 profiles: card initialization config"
+description: "PKCS#15 profile files define smart card file structure, PIN policies, and security settings used during card initialization with pkcs15-init."
+---
+
+PKCS#15 profile files drive the `pkcs15-init` tool when personalizing a smart card. They define the card's file hierarchy, PIN policies, access conditions, and crypto object parameters. When `pkcs15-init` runs, it reads two profiles: a generic application profile (specified on the command line) and a card-specific profile (selected automatically based on the detected card type). Together they fully describe how the card should be laid out and secured.
+
+## Profile file locations
+
+Profile files are installed to the system data directory at build time. On most Linux systems this is:
+
+```
+/usr/share/opensc/
+```
+
+On macOS it is typically:
+
+```
+/Library/OpenSC/share/opensc/
+```
+
+You can override the profile directory by setting `profile_dir` in `opensc.conf`:
+
+```conf
+app default {
+    profile_dir = /usr/local/share/opensc;
+}
+```
+
+## File format
+
+Profile files use the same block syntax as `opensc.conf`. Blocks are delimited by `{ }`, key-value pairs are terminated with `;`, and comments start with `#`.
+
+```
+key, name {
+    option = value;
+    nested_block {
+        another = value;
+    }
+}
+```
+
+Profiles support macro substitution. Macros are defined as `name = value;` pairs inside a `macros { }` block and referenced with `$name` elsewhere in the profile. This allows options to vary between profile options (such as `default` and `onepin`) without duplicating definitions.
+
+## Top-level profile blocks
+
+A profile file can contain the following block types at the root level:
+
+| Block | Purpose |
+|-------|---------|
+| `cardinfo { }` | General card parameters (PIN length bounds, encoding). |
+| `pkcs15 { }` | Controls aspects of the PKCS#15 structure written to the card. |
+| `option name { }` | Named option sets that modify profile behavior. |
+| `PIN name { }` | PIN type definitions and security policies. |
+| `filesystem { }` | The file system structure to create on the card. |
+| `macros { }` | Macro definitions used throughout the profile. |
+
+## `cardinfo` block
+
+Sets card-level defaults. Per-card profiles typically override `max-pin-length` and `pin-encoding` to match the card's hardware constraints.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `label = string;` | `OpenSC Card` | Card label written to EF(TokenInfo). |
+| `manufacturer = string;` | `OpenSC Project` | Manufacturer string written to EF(TokenInfo). |
+| `min-pin-length = N;` | `4` | Global minimum PIN length. Inherited by PIN blocks unless overridden. |
+| `max-pin-length = N;` | `8` | Global maximum PIN length. Should be overridden in the card-specific profile. |
+| `pin-encoding = value;` | `ascii-numeric` | Default PIN encoding. Values: `BCD`, `ascii-numeric`, `utf8`, `half-nibble-bcd`, `iso9564-1`. |
+| `pin-pad-char = value;` | `0x00` | Byte used to pad PINs to their stored length. |
+| `pin-domains = bool;` | `no` | Keep each PIN and its associated keys in a separate directory on the card. |
+
+```conf
+cardinfo {
+    label           = "My Organization Card";
+    manufacturer    = "Acme Corp";
+    min-pin-length  = 6;
+    max-pin-length  = 12;
+    pin-encoding    = ascii-numeric;
+    pin-pad-char    = 0xFF;
+}
+```
+
+## `pkcs15` block
+
+Controls structural aspects of the PKCS#15 data written to the card.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `direct-certificates = bool;` | `no` | Store certificates directly in the CDF rather than in separate EFs. |
+| `encode-df-length = bool;` | `no` | Write DF length into the ODF. Useful with `direct-certificates = yes`. |
+| `do-last-update = bool;` | `yes` | Record the last-update timestamp in EF(TokenInfo). |
+| `pkcs15-id-style = value;` | `native` | Method for calculating crypto object IDs. Values: `native` (`E` + object count), `mozilla` (SHA1 of RSA modulus), `rfc2459` (SHA1 of DER-encoded public key). |
+| `minidriver-support-style = value;` | `none` | Minidriver integration style. Values: `none`, `gemalto`. |
+
+## `option` blocks
+
+Option blocks are named variations of the profile that adjust its behavior. The `default` option is always processed. Additional options are activated by appending them to the profile name with `+`.
+
+```bash
+# Use default option (implicit)
+pkcs15-init -p pkcs15
+
+# Use the onepin option
+pkcs15-init -p pkcs15+onepin
+
+# Use the small option
+pkcs15-init -p pkcs15+small
+```
+
+### Built-in options in `pkcs15.profile`
+
+| Option name | Description |
+|-------------|-------------|
+| `default` | Standard two-PIN layout (SO PIN + user PIN). Always processed. |
+| `onepin` | Single user PIN controls all operations. No separate SO PIN role. |
+| `small` | Reduces PKCS#15 directory file sizes for cards with limited memory. |
+| `direct-cert` | Stores certificates directly in the CDF for better performance. |
+
+An `option` block can contain a `macros { }` sub-block and a `pkcs15 { }` sub-block:
+
+```conf
+option default {
+    macros {
+        protected         = *=$SOPIN, READ=NONE;
+        unprotected       = *=NONE;
+        so-pin-flags      = local, initialized, needs-padding, soPin;
+        so-min-pin-length = 6;
+        so-pin-attempts   = 2;
+        so-auth-id        = FF;
+        odf-size          = 256;
+        cdf-size          = 512;
+        prkdf-size        = 256;
+    }
+}
+
+option onepin {
+    macros {
+        protected         = *=$PIN, READ=NONE;
+        unprotected       = *=NONE;
+        so-pin-flags      = local, initialized, needs-padding;
+        so-min-pin-length = 4;
+        so-pin-attempts   = 3;
+        so-auth-id        = 1;
+    }
+}
+```
+
+## `PIN` blocks
+
+`PIN` blocks configure PIN policies for each PIN role on the card. The block name specifies the PIN type.
+
+### PIN type names
+
+| Name | Aliases | Description |
+|------|---------|-------------|
+| `user-pin` | `pin` | Primary user PIN for authentication. |
+| `user-puk` | `puk` | PUK used to unblock the user PIN. |
+| `so-pin` | `sopin` | Security Officer PIN, controls card administration. |
+| `so-puk` | `sopuk` | PUK used to unblock the SO PIN. |
+
+### PIN block options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `attempts = N;` | `3` | Maximum failed attempts before the PIN is blocked. |
+| `flags = value, ...;` | `local, initialized, needs-padding` | PIN property flags (see below). |
+| `min-length = N;` | from `cardinfo` | Minimum PIN length for this PIN type. |
+| `max-length = N;` | from `cardinfo` | Maximum PIN length for this PIN type. |
+| `reference = N;` | driver default | PIN reference number used in card commands. |
+| `auth-id = value;` | `0` | Authentication ID for this PIN in PKCS#15 structures. |
+| `encoding = value;` | from `cardinfo` | PIN encoding for this specific PIN. |
+| `stored-length = N;` | `max-length` | Exact storage length on the card (used with `needs-padding`). |
+| `max-unlocks = N;` | `0` | Maximum number of unblock operations (0 = unlimited). |
+
+### PIN flags
+
+| Flag | Description |
+|------|-------------|
+| `case-sensitive` | PIN is case-sensitive. |
+| `local` | PIN is local to its DF rather than global. |
+| `change-disabled` | PIN cannot be changed by the user. |
+| `unblock-disabled` | PIN cannot be unblocked. |
+| `initialized` | PIN has been set (not in a blank state). |
+| `needs-padding` | PIN must be padded to `stored-length`. |
+| `unblockingPin` | This PIN is used to unblock another PIN. |
+| `soPin` | This is a Security Officer PIN. |
+| `disable-allowed` | PIN can be disabled. |
+| `integrity-protected` | PIN is integrity-protected in storage. |
+| `confidentiality-protected` | PIN is encrypted in storage. |
+| `exchangeRefData` | Reference data can be exchanged. |
+
+```conf
+PIN user-pin {
+    attempts  = 3;
+    flags     = local, initialized, needs-padding;
+    min-length = 6;
+    max-length = 12;
+}
+
+PIN user-puk {
+    attempts  = 7;
+    min-length = 8;
+}
+
+PIN so-pin {
+    auth-id   = $so-auth-id;
+    attempts  = $so-pin-attempts;
+    min-length = $so-min-pin-length;
+    flags     = $so-pin-flags;
+}
+```
+
+<Note>
+Macro variables like `$so-auth-id` are resolved from the active `option` block's `macros` section. This allows the same PIN block to behave differently under the `default` vs. `onepin` options.
+</Note>
+
+## `filesystem` block
+
+The `filesystem` block defines the file system structure that `pkcs15-init` creates on the card. It contains nested `DF` (directory file) and `EF` (elementary file) blocks.
+
+The root of the hierarchy must be a `DF MF { }` block representing the card's Master File (MF). All other directories and files are nested within it.
+
+```conf
+filesystem {
+    DF MF {
+        path = 3F00;
+        type = DF;
+
+        EF DIR {
+            type    = EF;
+            file-id = 2F00;
+            size    = 128;
+            acl     = *=NONE;
+        }
+
+        DF PKCS15-AppDF {
+            type    = DF;
+            file-id = 5015;
+            aid     = A0:00:00:00:63:50:4B:43:53:2D:31:35;
+            acl     = *=NONE;
+            size    = 5000;
+
+            EF PKCS15-ODF {
+                file-id = 5031;
+                size    = $odf-size;
+                acl     = $unprotected;
+            }
+
+            EF PKCS15-TokenInfo {
+                file-id = 5032;
+                acl     = $unprotected;
+            }
+
+            EF PKCS15-AODF {
+                file-id = 4401;
+                size    = $aodf-size;
+                acl     = $protected;
+            }
+
+            EF PKCS15-PrKDF {
+                file-id = 4402;
+                size    = $prkdf-size;
+                acl     = $protected;
+            }
+
+            EF PKCS15-CDF {
+                file-id = 4404;
+                size    = $cdf-size;
+                acl     = $protected;
+            }
+        }
+    }
+}
+```
+
+### EF block options
+
+| Option | Description |
+|--------|-------------|
+| `type = EF;` | Must be `EF`. |
+| `file-id = hex;` | File identifier (relative path). |
+| `size = N;` | File size in bytes. |
+| `acl = value;` | Access Control List. Default: `NONE`. |
+| `structure = value;` | File structure: `TRANSPARENT`, `LINEAR-FIXED`, `LINEAR-FIXED-TLV`, `LINEAR-VARIABLE`, `LINEAR-VARIABLE-TLV`, `CYCLIC`, `CYCLIC-TLV`. |
+
+### DF block options
+
+| Option | Description |
+|--------|-------------|
+| `type = DF;` | Must be `DF`. |
+| `path = hex;` | Absolute path of the directory. |
+| `file-id = hex;` | File identifier (relative path). |
+| `aid = XX:XX:...:XX;` | Application identifier in colon-separated hex notation. |
+| `acl = value;` | Access Control List. |
+| `size = N;` | Allocated size in bytes. |
+
+### Standard EF names
+
+The following EF names are recognized by the PKCS#15 logic:
+
+`PKCS15-ODF`, `PKCS15-TokenInfo`, `PKCS15-UnusedSpace`, `PKCS15-PRKDF`, `PKCS15-PUKDF`, `PKCS15-PUKDF-TRUSTED`, `PKCS15-SKDF`, `PKCS15-CDF`, `PKCS15-CDF-TRUSTED`, `PKCS15-CDF-USEFUL`, `PKCS15-DODF`, `PKCS15-AODF`
+
+<Warning>
+Every profile file must include a `DF MF { }` block. A profile without an MF entry is incomplete and cannot be used by `pkcs15-init`.
+</Warning>
+
+## Available built-in profiles
+
+These profiles ship with OpenSC and reside in the profile directory. Each targets a specific card or card operating system:
+
+| Profile name | Target card / OS |
+|--------------|-----------------|
+| `pkcs15` | Generic PKCS#15 (base profile, used as the application profile) |
+| `cardos` | Siemens / Infineon CardOS |
+| `starcos` | Giesecke+Devrient STARCOS |
+| `openpgp` | OpenPGP card |
+| `sc-hsm` | SmartCard-HSM / Nitrokey HSM |
+| `myeid` | MyEID |
+| `muscle` | MUSCLE applet (JavaCard) |
+| `rutoken` | Rutoken |
+| `rutoken_ecp` | Rutoken ECP |
+| `rutoken_lite` | Rutoken Lite |
+| `iasecc` | IAS/ECC |
+| `gids` | Microsoft GIDS |
+| `entersafe` | EnterSafe |
+| `epass2003` | ePass2003 |
+| `asepcos` | ASEPCOS |
+| `authentic` | Oberthur AuthentIC |
+| `isoApplet` | ISOApplet (JavaCard) |
+| `oberthur` | Oberthur Cosmo |
+| `flex` | Schlumberger/Axalto CryptoFlex |
+| `cyberflex` | Schlumberger Cyberflex |
+| `setcos` | Setcos |
+
+## Selecting a profile
+
+Specify the application profile with `-p` or `--profile` when running `pkcs15-init`. The card-specific profile is selected automatically.
+
+```bash
+# Use the generic pkcs15 profile (default)
+pkcs15-init --erase-card --create-pkcs15 -p pkcs15
+
+# Use the onepin option variant
+pkcs15-init --erase-card --create-pkcs15 -p pkcs15+onepin
+
+# Use the small memory option
+pkcs15-init --erase-card --create-pkcs15 -p pkcs15+small
+```
+
+<Tip>
+The `pkcs15+onepin` option is useful when deploying cards to users who should not need to manage an SO PIN. All card operations are protected by a single user PIN.
+</Tip>
+
+## Creating a custom profile
+
+To create a custom profile for specific organizational requirements, start by copying the generic profile and modifying the PIN policies and file sizes:
+
+```conf
+# custom.profile
+# Inherits from pkcs15.profile; card-specific profile is still auto-selected.
+
+cardinfo {
+    label          = "Acme Corp Card";
+    manufacturer   = "Acme Corp";
+    min-pin-length = 8;
+    max-pin-length = 16;
+    pin-encoding   = ascii-numeric;
+}
+
+option default {
+    macros {
+        protected         = *=$SOPIN, READ=NONE;
+        unprotected       = *=NONE;
+        so-pin-flags      = local, initialized, needs-padding, soPin;
+        so-min-pin-length = 8;
+        so-pin-attempts   = 3;
+        so-auth-id        = FF;
+        odf-size          = 512;
+        cdf-size          = 1024;
+        prkdf-size        = 512;
+    }
+}
+
+PIN user-pin {
+    attempts   = 5;
+    flags      = local, initialized, needs-padding;
+    min-length = 8;
+    max-length = 16;
+}
+
+PIN so-pin {
+    auth-id    = $so-auth-id;
+    attempts   = $so-pin-attempts;
+    min-length = $so-min-pin-length;
+    flags      = $so-pin-flags;
+}
+```
+
+Then initialize the card with your custom profile:
+
+```bash
+pkcs15-init --erase-card --create-pkcs15 -p /path/to/custom
+```
+
+<Note>
+Custom profile files do not need the `.profile` extension in the `-p` argument when given as an absolute path. When given as a bare name (without a path), `pkcs15-init` searches the configured profile directory.
+</Note>
+
+## See also
+
+- [`pkcs15-init`](/tools/pkcs15-init): Card initialization and personalization tool
+- [`opensc.conf`](/tools/opensc-conf): Main OpenSC configuration file (includes `profile_dir` setting)

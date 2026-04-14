@@ -1,0 +1,141 @@
+---
+title: "OpenSC on Windows: install and get started"
+description: "Download and install OpenSC on Windows to use smart cards with PKCS#11, the Windows MiniDriver, and applications like Firefox and Chrome."
+---
+
+OpenSC provides a Windows MSI installer that sets up the PKCS#11 module, the Windows Smart Card MiniDriver, and all command-line tools in a single step. Once installed, OpenSC integrates transparently with Windows smart card infrastructure so that browsers, SSH clients, and other PKCS#11-aware applications can use the keys and certificates stored on your card.
+
+## Download the installer
+
+The latest stable installer is available on the [OpenSC GitHub Releases page](https://github.com/OpenSC/OpenSC/releases/latest). Three architecture variants are provided:
+
+| File | Architecture |
+|---|---|
+| `OpenSC*_x64.msi` | Intel/AMD 64-bit (most systems) |
+| `OpenSC*_x86.msi` | 32-bit programs on 64-bit Windows |
+| `OpenSC*_arm64.msi` | ARM64 (Surface Pro X, Snapdragon laptops) |
+
+<Note>
+Install the `x64` variant for most modern Windows systems. If you run 32-bit applications that need to load the PKCS#11 module, install the `x86` variant alongside the `x64` one.
+</Note>
+
+## Install OpenSC
+
+<Steps>
+  <Step title="Run the MSI installer">
+    Double-click the downloaded `.msi` file and follow the installation wizard. The default installation path is `C:\Program Files\OpenSC Project\OpenSC`.
+
+    Alternatively, install silently from an elevated command prompt:
+
+    ```bat
+    msiexec /i OpenSC-0.26.0_x64.msi /quiet
+    ```
+  </Step>
+
+  <Step title="Open a command prompt">
+    Open a new Command Prompt or PowerShell window after installation so that the updated `PATH` takes effect.
+  </Step>
+
+  <Step title="Verify the installation">
+    Check that OpenSC is installed and confirm its version:
+
+    ```bat
+    opensc-tool --info
+    ```
+
+    The output lists the OpenSC version and enabled components such as card drivers and PKCS#11 support.
+  </Step>
+
+  <Step title="Connect a smart card reader and verify detection">
+    Insert your PC/SC-compatible smart card reader. List all detected readers:
+
+    ```bat
+    opensc-tool --list-readers
+    ```
+
+    You should see at least one reader listed. If no readers appear, check that the reader driver is installed and the PC/SC service (`SCardSvr`) is running.
+  </Step>
+
+  <Step title="Insert your smart card and inspect it">
+    With a card inserted, list all certificates stored on the card:
+
+    ```bat
+    pkcs15-tool --list-certificates
+    ```
+
+    To see all objects (keys, certificates, PINs, and data objects) at once:
+
+    ```bat
+    pkcs15-tool --dump
+    ```
+
+    To list objects via the PKCS#11 interface:
+
+    ```bat
+    pkcs11-tool --list-objects
+    ```
+  </Step>
+</Steps>
+
+## Windows MiniDriver auto-registration
+
+When you insert a supported smart card, Windows queries the card for a compatible MiniDriver. OpenSC ships a generic Windows Smart Card MiniDriver (`opensc-minidriver.dll`) that registers automatically through the Windows Update mechanism or via the MSI installer.
+
+<Note>
+The MiniDriver enables Windows logon, Remote Desktop authentication, and CNG-based operations without requiring PKCS#11. If you only need PKCS#11 access from specific applications, no additional configuration is required.
+</Note>
+
+To confirm the MiniDriver is active, open **Device Manager**, expand **Smart card readers**, right-click your reader, and check the **Smart Cards** section for your card.
+
+## Use OpenSC with Firefox
+
+Firefox uses its own certificate store and must be configured to load the OpenSC PKCS#11 module manually.
+
+<Steps>
+  <Step title="Open Firefox Security Devices">
+    In Firefox, navigate to **Settings → Privacy & Security → Security Devices** (or type `about:preferences#privacy` in the address bar and scroll to **Certificates**).
+  </Step>
+
+  <Step title="Load the OpenSC PKCS#11 module">
+    Click **Load**, enter a descriptive name such as `OpenSC`, then browse to the PKCS#11 module:
+
+    ```
+    C:\Program Files\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll
+    ```
+
+    Click **OK** to confirm.
+  </Step>
+
+  <Step title="Verify the module is loaded">
+    The device list should now show your smart card token. Close and reopen Firefox to ensure the module loads on startup.
+  </Step>
+</Steps>
+
+## Use OpenSC with Chrome / Edge
+
+Chromium-based browsers on Windows use the system CryptoAPI/CNG stack rather than a separate PKCS#11 module. Because OpenSC installs a Windows MiniDriver, certificates on your smart card are automatically visible to Chrome and Edge through the Windows Certificate Store — no additional browser configuration is needed.
+
+<Tip>
+If certificates do not appear in Chrome's certificate picker, open **certmgr.msc** and check whether the smart card certificates are listed under **Personal → Certificates**. Reinsert the card if they are absent.
+</Tip>
+
+## Verify a card operation
+
+To confirm end-to-end functionality, print the card's ATR (Answer To Reset) and the detected card driver:
+
+```bat
+opensc-tool --atr
+opensc-tool --name
+```
+
+List all private keys stored on the card (requires PIN):
+
+```bat
+pkcs15-tool --list-keys
+```
+
+List all available card drivers compiled into OpenSC:
+
+```bat
+opensc-tool --list-drivers
+```

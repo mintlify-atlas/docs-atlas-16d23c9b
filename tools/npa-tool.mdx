@@ -1,0 +1,181 @@
+---
+title: "npa-tool: read German nPA and ePassport data"
+description: "Use npa-tool to display data from German nPA ID cards and ICAO-compliant ePassports using PACE and Extended Access Control protocols."
+---
+
+`npa-tool` reads and writes data stored on German nPA ID cards (neuer Personalausweis) and ICAO-compliant machine-readable travel documents (ePassports). It performs Password Authenticated Connection Establishment (PACE) and Extended Access Control v2 (EAC2) as specified in BSI TR-03110 and ICAO Doc 9303, allowing authenticated access to the card's data groups.
+
+<Warning>
+  Reading data groups from an eID card or ePassport requires a valid terminal certificate chain and proper Extended Access Control setup. Without a valid CV certificate, only unauthenticated data groups can be read.
+</Warning>
+
+## PACE authentication
+
+PACE establishes a secure channel to the card using one of four secrets. You must run PACE before reading protected data groups or performing PIN management.
+
+```bash
+# Establish PACE with the eID-PIN
+npa-tool --pin
+
+# Establish PACE with the Card Access Number (CAN, printed on card front)
+npa-tool --can
+
+# Establish PACE with the PUK
+npa-tool --puk
+
+# Establish PACE with the Machine Readable Zone (MRZ, no newlines)
+npa-tool --mrz
+```
+
+If you omit the value, the tool prompts for it interactively. You can also pass the value directly:
+
+```bash
+npa-tool --pin 123456
+npa-tool --can 123456
+```
+
+To read credentials from environment variables instead of the command line, use `--env`:
+
+```bash
+export PIN=123456
+export CAN=654321
+npa-tool --env --pin
+```
+
+## PIN management
+
+```bash
+# Install a new eID-PIN (requires current PIN via PACE first)
+npa-tool --pin --new-pin
+
+# Resume a suspended PIN using the CAN (activates the last retry attempt)
+npa-tool --can --resume
+
+# Unblock a blocked PIN using the PUK (restores three retry attempts)
+npa-tool --puk --unblock
+```
+
+## Reading data groups
+
+Once PACE is established and Terminal Authentication succeeds, data groups can be read. The available groups depend on the card type (eID vs. ePassport) and the permissions in your CV certificate.
+
+```bash
+# Read all available data groups
+npa-tool --pin --read-all-dgs
+
+# Read specific data groups
+npa-tool --pin --read-dg1   # Document type and issuing state
+npa-tool --pin --read-dg2   # Issuing authority
+npa-tool --pin --read-dg3   # Date of expiry
+npa-tool --pin --read-dg4   # Given names
+npa-tool --pin --read-dg5   # Family names
+npa-tool --pin --read-dg7   # Date of birth
+npa-tool --pin --read-dg17  # Address data (writable, nPA only)
+npa-tool --pin --read-dg19  # Residence permit I (writable, nPA only)
+```
+
+### Writing data groups
+
+Certain data groups on the nPA can be written back to update resident-specific fields:
+
+```bash
+# Write address data (DG17) as hex-encoded TLV
+npa-tool --pin --write-dg17 <hex-string>
+
+# Write residence permit data (DG18, DG19, DG20, DG21)
+npa-tool --pin --write-dg18 <hex-string>
+npa-tool --pin --write-dg19 <hex-string>
+npa-tool --pin --write-dg20 <hex-string>
+npa-tool --pin --write-dg21 <hex-string>
+```
+
+## Terminal and Chip Authentication
+
+For reading protected data groups, you need a CV certificate chain and the corresponding terminal private key.
+
+```bash
+npa-tool \
+  --pin \
+  --cv-certificate CVCA.cvcert \
+  --cv-certificate DV.cvcert \
+  --cv-certificate Terminal.cvcert \
+  --private-key terminal.key \
+  --read-dg4 \
+  --read-dg5
+```
+
+| Option | Description |
+|--------|-------------|
+| `--cv-certificate` _file_ | CV certificate file (can be specified multiple times to build a chain) |
+| `--cert-desc` _hex_ | Certificate description for Terminal Authentication display |
+| `--chat` _hex_ | Card Holder Authorization Template; defaults to the terminal's own CHAT |
+| `--auxiliary-data` _hex_ | Terminal auxiliary data for age and validity verification |
+| `--private-key` _file_ | Terminal private key file |
+| `--cvc-dir` _dir_ | Directory containing CVCA certificates (default: `~/.local/etc/eac/cvc`) |
+| `--x509-dir` _dir_ | Directory containing X.509 certificates (default: `~/.local/etc/eac/x509`) |
+| `--disable-ta-checks` | Skip validity period checking for CV certificates |
+| `--disable-ca-checks` | Disable passive authentication (Chip Authentication) |
+
+## Verification operations
+
+```bash
+# Verify that the card has not expired (YYYYMMDD reference date)
+npa-tool --pin --verify-validity 20251231
+
+# Verify age: confirm the holder is older than a reference birth date
+npa-tool --pin --older-than 20030101
+
+# Verify community ID (municipality code as hex)
+npa-tool --pin --verify-community 02760000110000
+```
+
+## Card application selection
+
+```bash
+# Select the eID application (default)
+npa-tool --pin --application eID
+
+# Select the ePassport (eMRTD) application
+npa-tool --mrz --application eMRTD
+```
+
+## Options reference
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--pin` [_string_] | `-p` | Run PACE with eID-PIN |
+| `--puk` [_string_] | `-u` | Run PACE with PUK |
+| `--can` [_string_] | `-c` | Run PACE with Card Access Number |
+| `--mrz` [_string_] | `-m` | Run PACE with Machine Readable Zone |
+| `--env` | | Read PIN/PUK/CAN/MRZ/NEWPIN from environment variables |
+| `--new-pin` [_string_] | `-N` | New PIN to install |
+| `--resume` | `-R` | Resume eID-PIN using CAN |
+| `--unblock` | `-U` | Unblock PIN using PUK |
+| `--cv-certificate` _file_ | `-C` | CV certificate for terminal chain |
+| `--chat` _hex_ | | Card Holder Authorization Template |
+| `--auxiliary-data` _hex_ | `-A` | Terminal auxiliary data |
+| `--private-key` _file_ | `-P` | Terminal private key |
+| `--cvc-dir` _dir_ | | CVCA certificate directory |
+| `--x509-dir` _dir_ | | X.509 certificate directory |
+| `--disable-ta-checks` | | Disable CV certificate validity checking |
+| `--disable-ca-checks` | | Disable passive authentication |
+| `--application` _app_ | | Card application: `eID` (default) or `eMRTD` |
+| `--read-all-dgs` | | Read all available data groups |
+| `--read-dg1`…`--read-dg21` | | Read individual data group |
+| `--write-dg17`…`--write-dg21` | | Write data group (nPA only) |
+| `--verify-validity` _date_ | | Verify card validity against reference date |
+| `--older-than` _date_ | | Verify age against reference date |
+| `--verify-community` _hex_ | | Verify community ID |
+| `--tr-03110v201` | | Force BSI TR-03110 v2.01 compliance |
+| `--disable-all-checks` | | Disable all fly-by-data checking |
+| `--translate` _file_ | `-t` | File of APDUs to send through the secure channel |
+| `--reader` _arg_ | `-r` | Reader number or ATR |
+| `--verbose` | `-v` | Increase verbosity; repeat for debug output |
+| `--version` | `-V` | Print version and exit |
+| `--help` | `-h` | Print help and exit |
+
+## See also
+
+- [`pkcs15-tool`](/tools/pkcs15-tool) — List PKCS#15 objects on the nPA (certificates, keys)
+- [`pkcs11-tool`](/tools/pkcs11-tool) — Perform PKCS#11 operations using the nPA PKCS#11 module
+- [`opensc-tool`](/tools/opensc-tool) — Inspect card ATR and send raw APDU commands

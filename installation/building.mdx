@@ -1,0 +1,168 @@
+---
+title: "Build OpenSC from source on Linux, macOS, Windows"
+description: "Compile OpenSC from source on Linux, macOS, and Windows, with full control over dependencies, optional features, and configure flags."
+---
+
+Building OpenSC from source gives you access to the latest unreleased changes and lets you enable or disable features that are not available in distribution packages — such as the Windows MiniDriver, CT-API reader support, or specific secure messaging modules. The build system uses Autotools on Linux and macOS, with an MSVC-compatible `Makefile.mak` also available for Windows.
+
+## Prerequisites
+
+Install the following before you begin:
+
+<Tabs>
+  <Tab title="Linux">
+    **Ubuntu / Debian**
+
+    ```bash
+    sudo apt install \
+      autoconf automake libtool pkg-config \
+      libssl-dev \
+      libpcsclite-dev \
+      libreadline-dev \
+      docbook-xsl xsltproc
+    ```
+
+    **Fedora / RHEL**
+
+    ```bash
+    sudo dnf install \
+      autoconf automake libtool pkgconf \
+      openssl-devel \
+      pcsc-lite-devel \
+      readline-devel \
+      docbook-style-xsl libxslt
+    ```
+
+    <Note>
+      OpenSC requires OpenSSL 1.1.1 or later. Distributions shipping OpenSSL 3.x are fully supported.
+    </Note>
+  </Tab>
+  <Tab title="macOS">
+    Install Xcode Command Line Tools and Homebrew dependencies:
+
+    ```bash
+    xcode-select --install
+    brew install autoconf automake libtool pkg-config openssl@3
+    ```
+
+    `libpcsclite` is not required on macOS because OpenSC uses the built-in PC/SC framework (`PCSC/winscard.h`) provided by Xcode.
+
+    When running `./configure`, set `PKG_CONFIG_PATH` so the build system can find the Homebrew OpenSSL:
+
+    ```bash
+    export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig"
+    ```
+  </Tab>
+  <Tab title="Windows (MinGW)">
+    Install [MSYS2](https://www.msys2.org/) and the MinGW-w64 toolchain, then install dependencies inside the MSYS2 shell:
+
+    ```bash
+    pacman -S mingw-w64-x86_64-toolchain \
+              autoconf automake libtool pkg-config \
+              mingw-w64-x86_64-openssl \
+              mingw-w64-x86_64-winscard
+    ```
+
+    An MSVC-compatible `Makefile.mak` is also available in the repository for builds with Visual Studio.
+
+    <Note>
+      For the Windows MiniDriver, pass `--enable-minidriver` to `./configure`. This requires the Windows Driver Kit (WDK) headers.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Clone the repository
+
+```bash
+git clone https://github.com/OpenSC/OpenSC.git
+cd OpenSC
+```
+
+## Build steps
+
+<Steps>
+  <Step title="Bootstrap the build system">
+    Generate the `configure` script and supporting Autotools files. Use `./bootstrap` for local development or `./bootstrap.ci` for reproducible CI builds (it pins tool versions more strictly):
+
+    ```bash
+    ./bootstrap
+    ```
+  </Step>
+  <Step title="Configure the build">
+    Run `./configure` to detect your system's libraries and set build options. With no flags, this produces a standard build with PC/SC support and OpenSSL enabled:
+
+    ```bash
+    ./configure
+    ```
+
+    See [configure options](#configure-options) below for the full list of flags you can add here.
+  </Step>
+  <Step title="Compile">
+    ```bash
+    make
+    ```
+
+    Pass `-j$(nproc)` (Linux) or `-j$(sysctl -n hw.logicalcpu)` (macOS) to build in parallel:
+
+    ```bash
+    make -j$(nproc)
+    ```
+  </Step>
+  <Step title="Install">
+    ```bash
+    sudo make install
+    ```
+
+    By default, OpenSC installs to `/usr/local`. Override with `./configure --prefix=/your/path`.
+  </Step>
+</Steps>
+
+## Configure options
+
+The table below lists the most commonly used `./configure` flags. Run `./configure --help` to see all available options.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--disable-optimization` | Optimization on | Disables compiler optimization (`-O0 -g`), useful for debugging |
+| `--with-pcsc-provider=PATH` | System default | Override the path to the PC/SC shared library (`libpcsclite.so`, `PCSC.framework`, or `winscard.dll`) |
+| `--disable-sm` | SM enabled | Disable secure messaging support and SM modules |
+| `--enable-minidriver` | Disabled | Build the Windows Smart Card MiniDriver (`opensc-minidriver.dll`) |
+| `--enable-ctapi` | Disabled | Enable CT-API reader support (mutually exclusive with `--enable-pcsc`) |
+| `--enable-openct` | Disabled | Enable OpenCT reader support (mutually exclusive with `--enable-pcsc`) |
+| `--disable-pcsc` | PC/SC enabled | Disable PC/SC reader support |
+| `--enable-openpace` | Auto-detect | Enable OpenPACE linkage for PACE protocol support |
+| `--enable-dnie-ui` | Disabled | Enable external PIN dialog for the DNIe Spanish ID card driver |
+| `--prefix=PATH` | `/usr/local` | Installation prefix |
+
+<Note>
+  Exactly one of `--enable-pcsc`, `--enable-ctapi`, `--enable-openct`, or `--enable-cryptotokenkit` may be active at a time. The configure script will error if you specify more than one.
+</Note>
+
+### Example: debug build with a custom PC/SC provider
+
+```bash
+./configure \
+  --disable-optimization \
+  --with-pcsc-provider=/usr/lib/x86_64-linux-gnu/libpcsclite.so.1
+```
+
+### Example: Windows MiniDriver build (MinGW)
+
+```bash
+./configure --enable-minidriver --host=x86_64-w64-mingw32
+make
+```
+
+## Running the tests
+
+After a successful build, run the unit and integration tests:
+
+```bash
+make check
+```
+
+<Note>
+  Some integration tests require a software token (e.g. `softhsm2`) to be installed. Pass `--disable-integration-tests` to `./configure` if you want to skip those.
+</Note>
+
+To run the tests the same way the GitHub Actions CI does — using isolated containers — see the [`containers/`](https://github.com/OpenSC/OpenSC/tree/master/containers) directory in the repository.

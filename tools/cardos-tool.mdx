@@ -1,0 +1,129 @@
+---
+title: "cardos-tool: inspect and format CardOS smart cards"
+description: "Manage Siemens and Atos CardOS smart cards with OpenSC, including displaying card status information and performing card formatting with lifecycle management."
+---
+
+`cardos-tool` is a command-line utility for inspecting and managing smart cards based on the Siemens Card/OS (CardOS) operating system. CardOS cards are widely deployed in corporate PKI environments, often issued for employee authentication, document signing, and encrypted email. The tool provides direct access to CardOS-specific lifecycle information and card formatting operations that are not available through the generic PKCS#11 or PKCS#15 interfaces.
+
+## Supported card versions
+
+`cardos-tool` works with smart cards and USB tokens running Siemens or Atos CardOS, including:
+
+- CardOS M4.01
+- CardOS M4.2
+- CardOS M4.3
+- CardOS M4.4
+- CardOS V5.0
+- CardOS V5.3
+
+<Note>
+  CardOS tokens may be supplied as smart cards, USB tokens, or virtual smart cards depending on the deployment. `cardos-tool` works with any form factor, provided the underlying OS is CardOS.
+</Note>
+
+## Displaying card information
+
+The `--info` option reads and displays status information about the card, including the CardOS version, available memory, lifecycle state, and other platform-specific attributes.
+
+```bash
+cardos-tool --info
+```
+
+Example output includes fields such as the card OS version, free EEPROM, and the current lifecycle phase (for example, whether the card is in an operational or terminated state).
+
+## Formatting a card
+
+The `--format` option resets the card to a blank, formatted state. This operation requires the card's start key as an authentication credential. The start key is a card-level key set by the card manufacturer or card management system.
+
+```bash
+# Format the card using its start key
+cardos-tool --format --startkey <hex-key>
+```
+
+<Warning>
+  Formatting a CardOS card is destructive. All files, keys, certificates, and PINs on the card are erased. This operation cannot be undone. Confirm you have the correct start key before proceeding.
+</Warning>
+
+### Changing the start key
+
+The start key can be updated using a raw APDU command. This is an advanced operation typically performed by a card management system:
+
+```bash
+cardos-tool --change-startkey <apdu>
+```
+
+The `<apdu>` argument is the full APDU command that performs the key change, in the format expected by the card. Consult your CardOS documentation or card management system guide for the correct APDU structure.
+
+## Selecting a reader
+
+By default, `cardos-tool` uses the first reader that has a card present. You can specify a different reader by number or by ATR:
+
+```bash
+# Use reader at index 1
+cardos-tool --info --reader 1
+
+# Select a reader by ATR
+cardos-tool --info --reader "3B:E9:00:00:81:31:FE:45:43:61:72:64:4F:53:56:35:2E:33:AF"
+
+# Wait for a card to be inserted before proceeding
+cardos-tool --info --wait
+```
+
+## Increasing verbosity
+
+Add `--verbose` to get more detailed output. Repeat the flag to enable debug-level logging from the OpenSC library:
+
+```bash
+# Standard verbose output
+cardos-tool --info --verbose
+
+# Debug output from OpenSC library
+cardos-tool --info --verbose --verbose
+```
+
+## Typical workflows
+
+### Checking a card before issuance
+
+Before loading credentials onto a CardOS card using `pkcs15-init`, confirm the card is accessible and readable:
+
+```bash
+cardos-tool --info
+```
+
+Review the output to verify the OS version matches what your card management system expects and that the card is in the correct lifecycle phase.
+
+### Recovering a card
+
+If a card needs to be reissued, format it to erase all existing content, then reinitialize using `pkcs15-init`:
+
+```bash
+# Erase and reformat the card
+cardos-tool --format --startkey <hex-key>
+
+# Reinitialize the PKCS#15 structure
+pkcs15-init --create-pkcs15
+```
+
+<Tip>
+  If you are working in a managed PKI environment, card formatting and reissuance are typically performed by the card management system rather than directly with `cardos-tool`. Use `cardos-tool` for inspection and troubleshooting.
+</Tip>
+
+## All options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--info` | `-i` | Display card or token information |
+| `--format` | `-f` | Format (erase) the card |
+| `--startkey` _arg_ | `-s` _arg_ | Start key for the format operation |
+| `--change-startkey` _arg_ | `-S` _arg_ | Change start key using an APDU command |
+| `--reader` _arg_ | `-r` _arg_ | Reader number or ATR |
+| `--wait` | `-w` | Wait for a card to be inserted |
+| `--verbose` | `-v` | Increase verbosity; repeat for debug output |
+| `--help` | `-h` | Print help message |
+
+## See also
+
+- [`pkcs15-init`](/tools/pkcs15-init) — initialize a PKCS#15 structure and load credentials onto a CardOS card
+- [`pkcs15-tool`](/tools/pkcs15-tool) — list and export certificates and keys from a CardOS card
+- [`pkcs11-tool`](/tools/pkcs11-tool) — PKCS#11 operations such as signing and key generation
+- [`opensc-tool`](/tools/opensc-tool) — low-level card inspection and APDU transmission

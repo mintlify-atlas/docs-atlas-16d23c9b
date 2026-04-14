@@ -1,0 +1,217 @@
+---
+title: "pkcs15-tool: list and read PKCS#15 card objects"
+description: "Use pkcs15-tool to list and read certificates, private keys, public keys, and PINs from PKCS#15 smart cards, and change or unblock PINs from the command line."
+---
+
+`pkcs15-tool` is a command-line utility for reading and manipulating PKCS#15 data structures on smart cards and similar security tokens. You can list and read PINs, private keys, public keys, certificates, and data objects stored on the card. Operations that require authentication will prompt for a PIN, or you can supply it via a command-line option or environment variable.
+
+## Common operations
+
+### List certificates
+
+```bash
+pkcs15-tool --list-certificates
+```
+
+### Read a certificate
+
+Read the certificate with a given ID and print it to stdout in PEM format:
+
+```bash
+pkcs15-tool --read-certificate ID
+```
+
+Save to a file:
+
+```bash
+pkcs15-tool --read-certificate 01 --output cert.pem
+```
+
+### List private keys
+
+```bash
+pkcs15-tool --list-keys
+```
+
+General metadata (name, ID, algorithm) is listed. Private key values are never displayed.
+
+<Note>
+On some cards, private key attributes are protected and require user PIN authentication before they can be read. Use `--verify-pin` in those cases.
+</Note>
+
+### List public keys
+
+```bash
+pkcs15-tool --list-public-keys
+```
+
+### Read a public key
+
+```bash
+pkcs15-tool --read-public-key ID
+```
+
+Export in SSH `authorized_keys` format:
+
+```bash
+pkcs15-tool --read-ssh-key ID
+```
+
+Use RFC 4716 format instead of the default single-line OpenSSH format:
+
+```bash
+pkcs15-tool --read-ssh-key ID --rfc4716
+```
+
+### List PINs
+
+```bash
+pkcs15-tool --list-pins
+```
+
+Displays general PIN information (name, ID, retry counter). Actual PIN values are never shown.
+
+### List secret (symmetric) keys
+
+```bash
+pkcs15-tool --list-secret-keys
+```
+
+### List data objects
+
+```bash
+pkcs15-tool --list-data-objects
+```
+
+Read a specific data object by OID, application name, or label:
+
+```bash
+pkcs15-tool --read-data-object "My Data"
+```
+
+Use `--raw` to print binary output directly instead of hex notation:
+
+```bash
+pkcs15-tool --read-data-object "My Data" --raw
+```
+
+### Dump all card information
+
+List all objects on the card in one pass:
+
+```bash
+pkcs15-tool --dump
+```
+
+### List on-card applications
+
+```bash
+pkcs15-tool --list-applications
+```
+
+### Change a PIN
+
+```bash
+pkcs15-tool --change-pin
+```
+
+Specify which PIN to change using its auth ID:
+
+```bash
+pkcs15-tool --change-pin --auth-id 01
+```
+
+### Unblock a PIN
+
+Unblocking requires knowledge of the PUK (PIN Unblock Key):
+
+```bash
+pkcs15-tool --unblock-pin
+```
+
+## Options reference
+
+### Card and reader selection
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--reader` *arg* | | Reader number to use. Defaults to the first reader with a card present. Pass an ATR string to select by matching card. |
+| `--aid` *aid* | | Hex AID of the on-card PKCS#15 application to bind to. |
+| `--wait` | `-w` | Wait for a card insertion before proceeding. |
+| `--no-cache` | | Disable token data caching. |
+| `--clear-cache` | | Remove the user's cache directory (on Windows also removes the system cache directory). |
+
+### Listing operations
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--list-certificates` | `-c` | List all certificates on the token. |
+| `--list-keys` | `-k` | List all private keys (metadata only, no key values). |
+| `--list-public-keys` | | List all public keys including algorithm and length. |
+| `--list-secret-keys` | | List all secret (symmetric) keys (metadata only). |
+| `--list-pins` | | List all PINs (metadata only, no PIN values). |
+| `--list-data-objects` | `-C` | List all data objects. May require `--verify-pin` on some cards. |
+| `--list-info` | | List card objects (compact alternative to `--dump`). |
+| `--list-applications` | | List on-card PKCS#15 applications. |
+| `--dump` | `-D` | List all card objects. |
+| `--short` | `-s` | Output lists in compact format. |
+
+### Reading objects
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--read-certificate` *id* | | Read the certificate with the given ID. |
+| `--read-public-key` *id* | | Read the public key with the given ID. |
+| `--read-ssh-key` *id* | | Read a public key in OpenSSH `authorized_keys` format. |
+| `--rfc4716` | | With `--read-ssh-key`, output in RFC 4716 format instead of single-line OpenSSH. |
+| `--read-data-object` *data* | `-R` | Read a data object by OID, application name, or label. Prints hex to stdout unless `--raw` is set. |
+
+### Output
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--output` *filename* | `-o` | Write output to a file instead of stdout. Overwrites existing files. Data written to a file is always raw binary regardless of `--raw`. |
+| `--raw` | | Print binary data directly to stdout. By default, non-file output uses hex notation. Does not affect file output. |
+
+### Authentication
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--auth-id` *id* | `-a` | Specify the auth ID of the PIN to use (useful with `--change-pin`). |
+| `--pin` *pin* | | User PIN. Use `env:VARIABLE` to read from an environment variable. |
+| `--new-pin` *pin* | | New PIN value for change or unblock operations. |
+| `--puk` *puk* | | PUK for unblocking. |
+| `--verify-pin` | | Verify the user PIN after card binding and before any command. Without `--auth-id`, the first non-SO, non-unblock PIN is verified. |
+| `--test-session-pin` | | Equivalent to `--verify-pin` with additional session PIN generation. |
+| `--use-pinpad` | | Do not prompt for PINs; use a PIN pad reader instead. |
+
+<Warning>
+Passing PINs on the command line is a security risk — other processes can read command-line arguments with `ps`. Use `env:VARIABLE` or allow interactive prompting where possible.
+</Warning>
+
+### PIN management
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--change-pin` | | Change a PIN or PUK on the token. Requires current PIN authentication. |
+| `--unblock-pin` | `-u` | Unblock a PIN using the PUK. |
+
+### Maintenance
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--test-update` | `-T` | Test whether the card needs a security update. |
+| `--update` | `-U` | Apply a security update to the card. |
+| `--verbose` | `-v` | Increase verbosity. Repeat the flag to enable library-level debug output. |
+| `--version` | | Print the OpenSC package version. |
+
+## Output formats
+
+Certificate and key output is in **PEM** format by default when writing to stdout or a file with `--output`. When using `--read-object` via `pkcs11-tool`, the default is DER binary.
+
+Data objects printed to stdout use hex notation by default. Pass `--raw` to receive raw binary instead. Output written to a file with `--output` is always raw binary regardless of `--raw`.
+
+## See also
+
+- [pkcs15-init](/tools/pkcs15-init) — Create PKCS#15 structures and load keys and certificates onto a card.
+- [pkcs15-crypt](/tools/pkcs15-crypt) — Perform cryptographic operations using keys stored on a PKCS#15 card.

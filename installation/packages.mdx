@@ -1,0 +1,99 @@
+---
+title: "Install OpenSC using pre-built packages"
+description: "Install pre-built OpenSC packages on Windows, macOS, and Linux using official installers, Homebrew, or your distribution's package manager."
+---
+
+Pre-built OpenSC packages are the fastest way to get up and running. Official releases are published on [GitHub](https://github.com/OpenSC/OpenSC/releases/latest) as signed installers for Windows and macOS, while all major Linux distributions and FreeBSD ship OpenSC in their default package repositories. Choose your platform below and you can have OpenSC installed in under a minute.
+
+<Tabs>
+  <Tab title="Windows">
+    Download the MSI installer for your architecture from the [latest GitHub release](https://github.com/OpenSC/OpenSC/releases/latest):
+
+    | File | Architecture |
+    |------|-------------|
+    | `OpenSC*_x64.msi` | Intel/AMD 64-bit |
+    | `OpenSC*_x86.msi` | Intel/AMD 32-bit |
+    | `OpenSC*_arm64.msi` | ARM 64-bit |
+
+    Run the installer and follow the prompts. The installer places the PKCS#11 module, command-line tools, and the Windows MiniDriver in `%PROGRAMFILES%\OpenSC Project\OpenSC\`.
+
+    <Note>
+      If you need to support 32-bit applications on a 64-bit Windows system, install both the `x64` and `x86` packages. The `x64` installer does not include the 32-bit PKCS#11 module.
+    </Note>
+  </Tab>
+  <Tab title="macOS">
+    **Homebrew (recommended)**
+
+    ```bash
+    brew install opensc
+    ```
+
+    Homebrew installs OpenSC and keeps it up to date with `brew upgrade`.
+
+    **DMG installer**
+
+    Download `OpenSC*.dmg` from the [latest GitHub release](https://github.com/OpenSC/OpenSC/releases/latest), open it, and run the `.pkg` inside. The installer places OpenSC under `/Library/OpenSC/`.
+
+    <Note>
+      The Homebrew package and the DMG installer are independent. Install only one to avoid version conflicts.
+    </Note>
+  </Tab>
+  <Tab title="Ubuntu / Debian">
+    ```bash
+    sudo apt install opensc opensc-pkcs11
+    ```
+
+    The `opensc` package provides the command-line tools. The `opensc-pkcs11` package provides the PKCS#11 shared library used by browsers and other applications.
+  </Tab>
+  <Tab title="Fedora / RHEL">
+    ```bash
+    sudo dnf install opensc
+    ```
+
+    On older RHEL/CentOS systems using `yum`:
+
+    ```bash
+    sudo yum install opensc
+    ```
+  </Tab>
+  <Tab title="Arch Linux">
+    ```bash
+    sudo pacman -S opensc
+    ```
+  </Tab>
+  <Tab title="FreeBSD">
+    ```bash
+    pkg install opensc
+    ```
+  </Tab>
+</Tabs>
+
+## Nightly builds
+
+If you need the latest unreleased changes, nightly builds are published by their git commit hash as branches of the [OpenSC/Nightly](https://github.com/OpenSC/Nightly) GitHub repository. These builds follow the same installer format as official releases (MSI for Windows, DMG for macOS).
+
+<Warning>
+  Nightly builds are not tested as thoroughly as official releases and may contain regressions. Use them for testing and development only.
+</Warning>
+
+## Verify the installation
+
+After installing, confirm that the tools are on your `PATH` and check the version:
+
+```bash
+opensc-tool --info
+```
+
+You should see output showing the OpenSC version, the compiled-in default PKCS#11 module path, and compile-time feature flags. If the command is not found, ensure the OpenSC `bin` directory is in your `PATH`.
+
+To confirm your smart card reader is detected:
+
+```bash
+opensc-tool --list-readers
+```
+
+To list objects on an inserted card:
+
+```bash
+pkcs15-tool --list-certificates
+```

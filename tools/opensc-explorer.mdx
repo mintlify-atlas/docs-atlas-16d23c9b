@@ -1,0 +1,200 @@
+---
+title: "opensc-explorer: interactive smart card file browser"
+description: "Use opensc-explorer to interactively navigate a smart card's file system, read files, send APDUs, manage PINs, and script card operations."
+---
+
+`opensc-explorer` is an interactive shell for exploring and manipulating the file system of a smart card or security token. It works similarly to a Unix shell: you navigate a hierarchy of Dedicated Files (DFs) and Elementary Files (EFs), list contents, read files, and send raw APDUs — all within a single session. It is particularly useful for debugging unknown cards, verifying card contents, and scripting card operations in automated workflows.
+
+## Synopsis
+
+```bash
+opensc-explorer [OPTIONS] [SCRIPT]
+```
+
+If you provide a `SCRIPT` file, `opensc-explorer` runs in non-interactive mode and reads commands from that file, one per line. Without a script, it starts an interactive prompt reading from standard input.
+
+## Command-line options
+
+| Option | Short | Description |
+|---|---|---|
+| `--card-driver <driver>` | `-c <driver>` | Use the given card driver. The default is to auto-detect. Pass `?` to list all available drivers and exit. |
+| `--mf <path>` | `-m <path>` | Select the file at `path` on startup. The default is the Master File (`3F00`). Pass an empty string (`--mf ""`) to skip the initial file selection. |
+| `--reader <arg>` | `-r <arg>` | Number of the reader to use. By default, the first reader with a present card is used. If `arg` is an ATR, the reader with a matching card will be chosen. |
+| `--wait` | `-w` | Wait for a card to be inserted. |
+| `--verbose` | `-v` | Increase verbosity. Repeat the flag multiple times to enable debug output in the OpenSC library. |
+
+## Interactive commands
+
+Once `opensc-explorer` is running, it accepts the following commands at its prompt. Input lines are split on whitespace; the first word is the command and the rest are arguments, similar to a shell.
+
+### Navigation and file listing
+
+| Command | Description |
+|---|---|
+| `ls [pattern ...]` | List files in the current DF. If one or more patterns are given, only matching files are shown. |
+| `cd ..` | Move up one level in the file system hierarchy. |
+| `cd <file-id>` | Change to the DF specified by `file-id`. The DF must be directly beneath the current DF. |
+| `cd aid:<DF-name>` | Jump to the Master File of the application identified by `DF-name`. |
+| `find [start-id [end-id]]` | Find all files in the current DF by selecting all file identifiers in the range `start-id` to `end-id`. Defaults to `0000`–`FFFF`. |
+| `find_tags [start-tag [end-tag]]` | Find all data object tags in the current context using GET DATA in the range `start-tag` to `end-tag`. Defaults to `0000`–`FFFF`. |
+| `info [file-id]` | Display attributes of `file-id`, or the current file if no argument is given. |
+
+### Reading file contents
+
+| Command | Description |
+|---|---|
+| `cat [file-id \| sfi:<short-id>] [rec-no]` | Print the contents of the specified EF. If no argument is given, print the currently selected EF. Optionally specify a record number for record-oriented files. |
+| `asn1 <file-id> [rec-no] [offs]` | Parse and print the ASN.1 encoded content of the EF specified by `file-id`. Optionally limit to a specific record and start at a given byte offset (default: `0`). |
+
+### Transferring files
+
+| Command | Description |
+|---|---|
+| `get <file-id> [output]` | Copy an EF from the card to a local file. If `output` is omitted, the filename is derived from the full card path. |
+| `get_record <file-id> <rec-no> [output]` | Copy a single record from a record-oriented EF to a local file. If `output` is omitted, the filename is derived from the card path and record number. |
+| `put <file-id> <input>` | Copy a local file to the card file identified by `file-id`. |
+| `do_get <hex-tag> [output]` | Copy the card data object (DO) identified by `hex-tag` to a local file. If `output` is omitted, the contents are shown as a hex dump. |
+| `do_put <hex-tag> <data>` | Write `data` to the card data object identified by `hex-tag`. `data` can be a colon-separated hex sequence or a double-quoted string. |
+
+### Creating and deleting files
+
+| Command | Description |
+|---|---|
+| `mkdir <file-id> <size>` | Create a new DF with the given numeric `file-id` and `size`. |
+| `create <file-id> <size>` | Create a new EF with the given numeric `file-id` and `size`. |
+| `delete <file-id>` | Remove the EF or DF specified by `file-id`. |
+| `rm <file-id>` | Remove the EF or DF specified by `file-id`. (Alias for `delete`.) |
+| `update_binary <file-id> <offs> <data>` | Binary update of `file-id` starting at byte offset `offs`. `data` can be a colon-separated hex sequence or a double-quoted string. |
+| `update_record <file-id> <rec-nr> <rec-offs> <data>` | Update record `rec-nr` of `file-id` at offset `rec-offs`. `data` can be a colon-separated hex sequence or a double-quoted string. |
+| `erase` | Erase the card, if the card supports this operation. |
+
+### PIN and key management
+
+| Command | Description |
+|---|---|
+| `verify <key-type><key-id> [key]` | Present a PIN or key to the card. `key-type` is one of `CHV`, `KEY`, `AUT`, or `PRO`. `key` can be a colon-separated hex sequence or a double-quoted string. If omitted, the PIN is read from the reader's pin pad or prompted interactively. |
+| `change CHV<pin-ref> [old-pin] <new-pin>` | Change the PIN identified by `pin-ref`. Values can be hex sequences, double-quoted strings, empty (`""`), or absent (read from pin pad). |
+| `unblock CHV<pin-ref> [puk [new-pin]]` | Unblock the PIN identified by `pin-ref` using `puk`, optionally setting a new value. Values follow the same format as `change`. |
+| `pin_info <key-type><key-id>` | Get information on a PIN or key from the card. `key-type` is one of `CHV`, `KEY`, `AUT`, or `PRO`. |
+
+### APDU and data operations
+
+| Command | Description |
+|---|---|
+| `apdu <data> [...]` | Send a custom APDU to the card. `data` is a series of hex sequences and double-quoted strings. |
+| `random <count> [output-file]` | Generate `count` bytes of random data from the card. If `output-file` is given, write to that file; otherwise display as a hex dump. |
+| `sm open \| close` | Call the card's secure messaging handler to open or close a secure channel. |
+
+### Utility commands
+
+| Command | Description |
+|---|---|
+| `debug [level]` | Set the OpenSC debug level to `level`. If omitted, show the current debug level. |
+| `echo <string> [...]` | Print the given strings. Useful in scripts. |
+| `help [pattern]` | Display available commands. If `pattern` is given, show only matching commands. |
+| `quit` | Exit `opensc-explorer`. |
+| `#` | Comment. Anything following `#` on a line is ignored. |
+
+## Examples
+
+### Launch and explore the MF
+
+```bash
+opensc-explorer
+```
+
+```
+OpenSC Explorer version 0.25.0
+Using reader with a card: ACS ACR122U 00 00
+OpenSC explorer -- type "help" for help
+3F00 >>>
+```
+
+### Navigate the file system
+
+```
+3F00 >>> ls
+FileID  Type  Size
+2F00    EF    13
+5015    DF    -
+
+3F00 >>> cd 5015
+3F005015 >>> ls
+FileID  Type  Size
+4B00    EF    600
+5031    EF    152
+```
+
+### Read a file
+
+```
+3F005015 >>> cat 4B00
+00000000:  70 81 ...
+```
+
+### Inspect file attributes
+
+```
+3F005015 >>> info 5031
+FileID    : 5031
+Type      : EF [Transparent]
+Size      : 152
+...
+```
+
+### Verify a PIN and read a protected file
+
+```
+3F005015 >>> verify CHV1 "1234"
+Code correct.
+3F005015 >>> get 4B00 /tmp/ef-4b00.bin
+```
+
+### Change a PIN
+
+```
+3F005015 >>> change CHV2 00:00:00:00:00:00 "foobar"
+```
+
+### Unblock a PIN using a PUK
+
+```
+3F005015 >>> unblock CHV2 00:00:00:00:00:00 "newpin"
+```
+
+### Send a custom APDU
+
+```
+3F00 >>> apdu 00:A4:00:00:02:3F:00
+```
+
+### Run a script non-interactively
+
+Create a script file:
+
+```bash
+# explore.script
+ls
+cd 5015
+cat 4B00
+quit
+```
+
+Then execute it:
+
+```bash
+opensc-explorer explore.script
+```
+
+<Tip>
+Use the `#` comment syntax in scripts to document what each step does. This makes automated card inspection scripts much easier to maintain.
+</Tip>
+
+<Warning>
+Commands like `erase`, `delete`, and `update_binary` make irreversible changes to card data. Always verify the current path with `ls` and `info` before writing or deleting files.
+</Warning>
+
+## See also
+
+- [`opensc-tool`](/tools/opensc-tool) — command-line utility for ATR reading, APDU sending, and reader listing
+- [`pkcs15-tool`](/tools/pkcs15-tool) — read PKCS#15 objects from a card

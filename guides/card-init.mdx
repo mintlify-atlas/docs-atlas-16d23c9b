@@ -1,0 +1,196 @@
+---
+title: "Initialize a smart card with pkcs15-init tool"
+description: "Learn how to create a PKCS#15 structure on a blank smart card and load keys and certificates using the pkcs15-init personalization tool."
+---
+
+Card initialization — also called _personalization_ — is the process of writing a PKCS#15 structure onto a blank or freshly erased smart card, then loading the PINs, keys, and certificates that make the card usable. OpenSC provides `pkcs15-init` for this purpose. The tool reads a profile that describes the card's file layout and security policy, then carries out each initialization step via the card driver.
+
+## Prerequisites
+
+Before you begin, confirm that you have:
+
+- A blank card, or a card whose contents you can safely erase.
+- A card reader recognized by OpenSC (`opensc-tool --list-readers`).
+- The `pkcs15-init` binary installed (part of the standard OpenSC package).
+- Your chosen Security Officer (SO) PIN and PUK values ready.
+
+<Warning>
+Card initialization is largely irreversible. Erasing a card destroys all existing keys and certificates. Back up any data you need before proceeding.
+</Warning>
+
+## Step-by-step initialization
+
+<Steps>
+  <Step title="Erase the card">
+    Clear all existing content. Not every card supports this operation; if yours does not, `pkcs15-init` will exit with an error and you will need to start from a factory-blank card.
+
+    ```bash
+    pkcs15-init --erase-card
+    ```
+
+    For cards with multiple applications, you can erase a single application by its AID instead:
+
+    ```bash
+    pkcs15-init --erase-application <AID>
+    ```
+  </Step>
+
+  <Step title="Create the PKCS#15 structure">
+    Write the basic PKCS#15 directory structure onto the card. This creates the Object Directory File (ODF), Token Info, and the supporting directory files.
+
+    ```bash
+    pkcs15-init --create-pkcs15
+    ```
+
+    `pkcs15-init` will prompt for the SO PIN and SO PUK. Press **Enter** at the SO PIN prompt to skip installing a Security Officer PIN.
+
+    To skip the SO PIN entirely without being prompted:
+
+    ```bash
+    pkcs15-init --create-pkcs15 --no-so-pin
+    ```
+  </Step>
+
+  <Step title="Store the SO PIN (optional)">
+    If you did not set the SO PIN during `--create-pkcs15`, you can add it afterwards. The SO PIN protects the card structure itself; it is optional but recommended for managed deployments.
+
+    ```bash
+    pkcs15-init --store-pin --so-pin 123456 --so-puk 654321
+    ```
+
+    <Note>
+    Passing PIN values on the command line may expose them to other users via `ps`. Prefer the `env:VARIABLE` form or let the tool prompt interactively:
+
+    ```bash
+    export SOPIN=123456
+    pkcs15-init --store-pin --so-pin env:SOPIN
+    ```
+    </Note>
+  </Step>
+
+  <Step title="Store a user PIN">
+    Before adding any private keys, create at least one user PIN. The `--auth-id` value is a hexadecimal identifier used to link keys to this PIN.
+
+    ```bash
+    pkcs15-init --store-pin \
+      --auth-id 01 \
+      --pin 123456 \
+      --puk 654321 \
+      --label "User PIN"
+    ```
+
+    Common auth IDs are `01`, `02`, etc. Omit `--puk` or press **Enter** at the PUK prompt if you do not want an unblock PIN.
+  </Step>
+
+  <Step title="Generate a key pair on the card">
+    Ask the card to generate a key pair and store the private key on-card. The public key is automatically stored as a PKCS#15 public key object.
+
+    ```bash
+    pkcs15-init --generate-key rsa/2048 --auth-id 01
+    ```
+
+    Key spec formats:
+
+    | Spec | Algorithm |
+    |------|-----------|
+    | `rsa/2048` | RSA 2048-bit (default 3072) |
+    | `ec/prime256v1` | ECDSA P-256 |
+    | `Ed25519` | Edwards 25519 |
+    | `X25519` | Montgomery 25519 |
+    | `AES:32` | AES 256-bit (32 bytes) |
+
+    Omit `--id` to let the middleware derive the identifier from the key material (SHA1 of the modulus for RSA). If you must set an ID explicitly:
+
+    ```bash
+    pkcs15-init --generate-key rsa/2048 --auth-id 01 --id 01
+    ```
+  </Step>
+
+  <Step title="Store a certificate">
+    Upload a PEM-encoded X.509 certificate and link it to the key by sharing the same ID.
+
+    ```bash
+    pkcs15-init --store-certificate cert.pem --id 01 --label "My Certificate"
+    ```
+
+    Without `--id`, the middleware calculates an intrinsic ID from the certificate's public key, which automatically matches the related key pair.
+  </Step>
+</Steps>
+
+## Profiles
+
+The profile controls the card's file layout, PIN policy, and access conditions. `pkcs15-init` loads two profiles at startup:
+
+- **Generic application profile** — specified with `-p` (default: `pkcs15`).
+- **Card-specific profile** — selected automatically based on the detected card type.
+
+```bash
+# Use the default pkcs15 profile
+pkcs15-init --create-pkcs15
+
+# Use the cardos card-specific profile option
+pkcs15-init --create-pkcs15 --card-profile cardos
+```
+
+Profile options are appended with `+`:
+
+```bash
+# Single-PIN mode: user PIN also acts as SO PIN
+pkcs15-init --create-pkcs15 -p pkcs15+onepin
+```
+
+Available built-in options for `pkcs15.profile`:
+
+| Option | Description |
+|--------|-------------|
+| `default` | Standard two-PIN setup (SO PIN + user PINs) |
+| `onepin` | Single user PIN protects creation and deletion |
+| `small` | Reduced file sizes for cards with limited memory |
+
+Profile files are installed to `/usr/share/opensc/` (or the path reported by your build configuration). See [PKCS#15 profiles](/guides/profiles) for details on writing custom profiles.
+
+## PIN policy options
+
+These flags control how `pkcs15-init` handles PINs during initialization:
+
+| Option | Description |
+|--------|-------------|
+| `--pin PIN` | User PIN value (or `env:VAR`) |
+| `--puk PUK` | User PUK (unblock PIN) value |
+| `--so-pin SOPIN` | Security Officer PIN value |
+| `--so-puk SOPUK` | Security Officer PUK value |
+| `--no-so-pin` | Skip SO PIN entirely, do not prompt |
+| `--auth-id ID` | Hex ID of the PIN to create or use |
+| `--puk-id ID` | Hex ID of the PUK to create |
+| `--label LABEL` | Human-readable label for the PIN object |
+| `--use-pinpad` | Use PIN pad reader; do not prompt on host |
+
+## Importing an existing key or PKCS#12 bundle
+
+If you have an existing private key or a browser-exported PKCS#12 file, you can import it instead of generating a new key on-card:
+
+<Tabs>
+  <Tab title="PEM private key">
+    ```bash
+    pkcs15-init --store-private-key key.pem --auth-id 01
+    ```
+  </Tab>
+  <Tab title="PKCS#12 bundle">
+    ```bash
+    pkcs15-init --store-private-key bundle.p12 --format pkcs12 --auth-id 01
+    ```
+
+    A PKCS#12 file must use a single password for both integrity and confidentiality. `pkcs15-init` will also store any certificates found in the bundle.
+  </Tab>
+  <Tab title="Secret key">
+    ```bash
+    pkcs15-init --store-secret-key /dev/urandom \
+      --secret-key-algorithm aes:256 \
+      --auth-id 01
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Using `--id` when importing keys is deprecated. Let the middleware calculate the intrinsic ID so that related objects (private key, public key, certificate) share a consistent identifier automatically.
+</Warning>

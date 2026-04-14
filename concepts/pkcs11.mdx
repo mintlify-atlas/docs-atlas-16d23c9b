@@ -1,0 +1,145 @@
+---
+title: "Using the OpenSC PKCS#11 module with your applications"
+description: "Understand how OpenSC implements the PKCS#11 standard and how to configure browsers, SSH, and other applications to use smart card keys through the module."
+---
+
+PKCS#11 (also called Cryptoki) is the dominant standard API for hardware security modules and smart cards. It defines a common C interface that applications use to perform cryptographic operations — signing, decryption, key generation — without knowing anything about the underlying hardware. OpenSC ships a complete PKCS#11 implementation as a shared library that any PKCS#11-aware application can load.
+
+## The OpenSC PKCS#11 module
+
+The module is a single shared library installed to a platform-specific path:
+
+| Platform | Default path |
+|---|---|
+| Linux | `/usr/lib/opensc-pkcs11.so` or `/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so` |
+| macOS | `/Library/OpenSC/lib/opensc-pkcs11.so` |
+| Windows | `%PROGRAMFILES%\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll` |
+
+The source lives in `src/pkcs11/` and exports the standard `C_GetFunctionList` entry point required by PKCS#11.
+
+<Note>
+OpenSC also installs a `onepin-opensc-pkcs11.so` variant. It exposes only a single token slot, which simplifies configuration for applications that struggle with multi-slot setups.
+</Note>
+
+## Key operations
+
+Once loaded, the module exposes every PKCS#11 object stored in the card's PKCS#15 file system. The supported operations map directly to the security operation constants in `src/libopensc/opensc.h`:
+
+| PKCS#11 operation | libopensc constant | Description |
+|---|---|---|
+| `C_Sign` / `C_SignUpdate` | `SC_SEC_OPERATION_SIGN` (0x0002) | Compute a digital signature with a private key |
+| `C_Decrypt` | `SC_SEC_OPERATION_DECIPHER` (0x0001) | Decrypt data with a private key |
+| `C_DeriveKey` | `SC_SEC_OPERATION_DERIVE` (0x0004) | Derive a shared secret (ECDH) |
+| `C_GenerateKeyPair` | `SC_ALGORITHM_ONBOARD_KEY_GEN` | Generate a key pair on the card |
+| `C_Login` / `C_Logout` | PIN verification | Authenticate with the card's user PIN |
+| `C_WrapKey` / `C_UnwrapKey` | `SC_SEC_OPERATION_WRAP` / `SC_SEC_OPERATION_UNWRAP` | Symmetric key transport |
+
+## Supported mechanisms
+
+OpenSC translates PKCS#11 mechanism identifiers to the algorithm constants defined in `opensc.h`. The supported algorithm families are:
+
+**Asymmetric algorithms**
+
+| `opensc.h` constant | Value | Algorithm |
+|---|---|---|
+| `SC_ALGORITHM_RSA` | `0` | RSA (sign, decrypt, key generation) |
+| `SC_ALGORITHM_EC` | `2` | Elliptic curve (ECDSA, ECDH) |
+| `SC_ALGORITHM_GOSTR3410` | `3` | GOST R34.10 (Russian standard) |
+| `SC_ALGORITHM_EDDSA` | `4` | EdDSA (Ed25519, Ed448) |
+| `SC_ALGORITHM_XEDDSA` | `5` | XEdDSA (X25519, X448 for ECDH) |
+
+**RSA padding modes** (selected per operation via flags in `opensc.h`)
+
+- `SC_ALGORITHM_RSA_PAD_PKCS1` — PKCS#1 v1.5 (type 1 and type 2)
+- `SC_ALGORITHM_RSA_PAD_PSS` — PKCS#1 v2.0 PSS
+- `SC_ALGORITHM_RSA_PAD_OAEP` — PKCS#1 v2.0 OAEP
+- `SC_ALGORITHM_RSA_PAD_NONE` — Raw RSA (no padding)
+
+**Supported hash algorithms for RSA signing**
+
+SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, MD5, RIPEMD-160.
+
+**Symmetric algorithms** (on cards that support them)
+
+`SC_ALGORITHM_AES` (67), `SC_ALGORITHM_3DES` (65), `SC_ALGORITHM_DES` (64).
+
+<Info>
+Available mechanisms depend on the card. Not all cards support all algorithms. Use `pkcs11-tool --list-mechanisms` to see what your card supports.
+</Info>
+
+## Configuring applications
+
+### Firefox and Chrome
+
+Both browsers can load PKCS#11 modules for TLS client certificate authentication.
+
+<Tabs>
+  <Tab title="Firefox">
+    1. Open **Preferences → Privacy & Security → Security Devices**.
+    2. Click **Load**.
+    3. Enter a name such as `OpenSC` and the path to `opensc-pkcs11.so` (or `.dll` on Windows).
+    4. Click **OK**. Firefox will list the slots found on the token.
+  </Tab>
+  <Tab title="Chrome / Chromium (Linux)">
+    Chrome on Linux uses NSS. Add the module with `modutil`:
+
+    ```bash
+    modutil -dbdir sql:$HOME/.pki/nssdb -add "OpenSC PKCS#11" \
+      -libfile /usr/lib/opensc-pkcs11.so
+    ```
+  </Tab>
+</Tabs>
+
+### OpenSSH
+
+Pass the module path with `-I` for a one-off connection, or set it permanently in `~/.ssh/config`:
+
+```bash
+# One-off
+ssh -I /usr/lib/opensc-pkcs11.so user@host
+
+# Permanent — ~/.ssh/config
+Host *
+    PKCS11Provider /usr/lib/opensc-pkcs11.so
+```
+
+### OpenVPN
+
+```ini
+# openvpn.conf
+pkcs11-providers /usr/lib/opensc-pkcs11.so
+pkcs11-id 'manufacturer/model/serialnumber/label'
+```
+
+Use `openvpn --show-pkcs11-ids /usr/lib/opensc-pkcs11.so` to find the correct token ID string.
+
+## Session management and PIN caching
+
+A PKCS#11 session (`CK_SESSION_HANDLE`) maps to a logical channel with the card. OpenSC opens and manages PC/SC transactions behind the scenes.
+
+PIN entry behaviour is controlled by `opensc.conf`:
+
+- `pin_cache_counter` — number of operations before the PIN must be re-entered (default: unlimited within a session).
+- `pin_cache_ignore_user_consent` — bypass the PIN-per-operation policy required by some card profiles.
+
+<Warning>
+Some cards enforce a "PIN always required" policy at the card firmware level. In that case, `C_Login` must be called before every `C_Sign` or `C_Decrypt` call, regardless of the software caching setting.
+</Warning>
+
+## Debugging with pkcs11-spy
+
+OpenSC ships `pkcs11-spy.so` (and `pkcs11-spy.dll`), a passthrough PKCS#11 module that logs all function calls to a file or stderr. To use it, set two environment variables and point your application at the spy module instead of the real one:
+
+```bash
+export PKCS11SPY=/usr/lib/opensc-pkcs11.so   # real module
+export PKCS11SPY_OUTPUT=/tmp/pkcs11-spy.log  # log file
+
+# Now load pkcs11-spy.so in your application
+ssh -I /usr/lib/pkcs11/pkcs11-spy.so user@host
+```
+
+Each PKCS#11 function call, its arguments, and its return code are written to the log file, which makes it straightforward to diagnose exactly where an operation fails.
+
+<Tip>
+Use `pkcs11-tool --list-slots` and `pkcs11-tool --list-objects` to quickly verify that the module sees your card before configuring a browser or SSH client.
+</Tip>

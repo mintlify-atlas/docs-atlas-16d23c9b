@@ -1,0 +1,167 @@
+---
+title: "OpenSC on macOS: install, configure, and use"
+description: "Install OpenSC on macOS via Homebrew or the DMG installer, then authenticate over SSH, load the PKCS#11 module in Firefox, and use CryptoTokenKit."
+---
+
+OpenSC on macOS provides a PKCS#11 shared library, a set of command-line tools, and integration hooks for the macOS CryptoTokenKit framework. After installation you can authenticate over SSH using a key stored on your smart card, load the PKCS#11 module into Firefox, and let macOS applications access card credentials through the native token interface.
+
+## Install OpenSC
+
+Choose the method that fits your workflow.
+
+<CodeGroup>
+
+```bash Homebrew
+brew install opensc
+```
+
+```bash DMG installer
+# Download the latest .dmg from GitHub Releases, then mount and install:
+# https://github.com/OpenSC/OpenSC/releases/latest
+open OpenSC-*.dmg
+# Follow the installer wizard (drag to Applications or run the .pkg inside)
+```
+
+</CodeGroup>
+
+<Note>
+The Homebrew formula tracks stable releases and is the recommended method for most developers. The DMG installer from GitHub is useful when you need a specific version or want a system-wide install without Homebrew.
+</Note>
+
+## Verify the installation
+
+After installation, open a new terminal window so that the updated `PATH` is loaded, then check the OpenSC version and enabled components:
+
+```bash
+opensc-tool --info
+```
+
+List connected smart card readers:
+
+```bash
+opensc-tool --list-readers
+```
+
+If no readers are listed, ensure your reader is connected and recognized by the system. You can verify at the system level with:
+
+```bash
+pcsctest
+```
+
+## Inspect a smart card
+
+Insert your smart card and list its contents:
+
+```bash
+# List certificates stored on the card
+pkcs15-tool --list-certificates
+
+# List all objects (certificates, keys, PINs, data)
+pkcs15-tool --dump
+
+# List objects via the PKCS#11 interface
+pkcs11-tool --list-objects
+
+# Print the card name (detected driver)
+opensc-tool --name
+
+# Print the card's ATR in hex
+opensc-tool --atr
+```
+
+## Use with SSH authentication
+
+You can authenticate to SSH servers using a private key stored on your smart card. Pass the OpenSC PKCS#11 module to `ssh` with the `-I` flag:
+
+```bash
+ssh -I /usr/local/lib/opensc-pkcs11.so user@host
+```
+
+On Apple Silicon Macs (Homebrew installs to `/opt/homebrew`), the path differs:
+
+```bash
+ssh -I /opt/homebrew/lib/opensc-pkcs11.so user@host
+```
+
+<Tip>
+To avoid specifying the module path every time, add the following to `~/.ssh/config`:
+
+```
+PKCS11Provider /usr/local/lib/opensc-pkcs11.so
+```
+
+Adjust the path to match your Homebrew prefix (`/opt/homebrew` on Apple Silicon, `/usr/local` on Intel).
+</Tip>
+
+To retrieve the public key from the card in a format suitable for `~/.ssh/authorized_keys`, use `pkcs15-tool`:
+
+```bash
+pkcs15-tool --read-ssh-key 01
+```
+
+## Use with Firefox
+
+Firefox manages its own NSS certificate database and requires you to register the OpenSC PKCS#11 module manually.
+
+<Steps>
+  <Step title="Open Security Devices in Firefox">
+    Go to **Settings → Privacy & Security**, scroll to **Certificates**, and click **Security Devices**.
+  </Step>
+
+  <Step title="Load the OpenSC module">
+    Click **Load**, provide a name such as `OpenSC`, and enter the path to the PKCS#11 module.
+
+    Intel Mac (Homebrew):
+    ```
+    /usr/local/lib/opensc-pkcs11.so
+    ```
+
+    Apple Silicon Mac (Homebrew):
+    ```
+    /opt/homebrew/lib/opensc-pkcs11.so
+    ```
+
+    DMG installer (system-wide):
+    ```
+    /Library/OpenSC/lib/opensc-pkcs11.so
+    ```
+  </Step>
+
+  <Step title="Confirm the token appears">
+    The Security Devices list should now show your smart card token. Restart Firefox to ensure the module is loaded at startup.
+  </Step>
+</Steps>
+
+## macOS CryptoTokenKit integration
+
+OpenSC includes a CryptoTokenKit (CTK) extension that integrates with macOS's native token framework, making smart card certificates available to Safari, Mail, Keychain, and other system applications without PKCS#11 configuration.
+
+The CTK extension is included in the DMG installer. After installation, the system registers the extension automatically. You can verify it is active by checking **System Settings → Privacy & Security → Extensions → Smart Card** (macOS Ventura and later) or by running:
+
+```bash
+pluginkit -m -p com.apple.ctk-tokens
+```
+
+<Note>
+CryptoTokenKit support requires macOS 10.12 or later. For older macOS versions, use the PKCS#11 interface directly.
+</Note>
+
+## Menu bar notifications with opensc-notify
+
+`opensc-notify` is a macOS menu bar application bundled with the DMG installer. It monitors card insertion and removal events and displays notifications, making it easy to confirm your reader and card are recognized without running terminal commands.
+
+The application is installed to `/Applications/OpenSC.app` by the DMG installer. Launch it once to add it to the login items so it starts automatically.
+
+## List all card drivers
+
+To see all card drivers compiled into your OpenSC installation:
+
+```bash
+opensc-tool --list-drivers
+```
+
+To run a basic PKCS#11 functionality test against the inserted card:
+
+```bash
+pkcs11-tool --test --login
+```

@@ -1,0 +1,238 @@
+---
+title: "sc-hsm-tool: initialize and manage SmartCard-HSM"
+description: "Initialize and manage SmartCard-HSM hardware security modules with OpenSC, including DKEK share management and key wrap and unwrap for secure key backup."
+---
+
+`sc-hsm-tool` is a command-line utility for performing maintenance and key-management operations on [SmartCard-HSM](https://www.cardcontact.de/products/SmartCard-HSM_V1.1.pdf) devices. SmartCard-HSM is a hardware security module packaged in a smart card form factor — it provides tamper-resistant key storage, on-card cryptographic operations, and a portable HSM that can be used wherever a standard smart card reader is available. The tool handles tasks that go beyond what PKCS#11 or PKCS#15 interfaces expose: initializing the device, managing the Device Key Encryption Key (DKEK) for key backup and migration, and wrapping or unwrapping individual keys.
+
+## The DKEK and key backup
+
+The Device Key Encryption Key (DKEK) is a symmetric key used to protect keys when they are exported from the HSM. A key wrapped under the DKEK can only be unwrapped in a SmartCard-HSM that holds the same DKEK, enabling key backup and migration between devices.
+
+The DKEK is reconstructed by importing one or more DKEK shares. Each share is a password-encrypted file. The number of required shares is set at initialization time. For enhanced security, shares can be split using a threshold scheme so that no single person holds the full DKEK.
+
+<Note>
+  If you initialize without `--dkek-shares`, the DKEK is disabled entirely and keys cannot be exported. If you use `--dkek-shares 0`, the HSM generates a random DKEK internally — wrapped keys can only be restored to the same device.
+</Note>
+
+## Initializing the HSM
+
+Initialization destroys all existing keys, certificates, and files on the device. Run it once when setting up a new SmartCard-HSM or when you need to reprovision a device.
+
+```bash
+# Basic initialization with SO PIN, user PIN, and a single DKEK share
+sc-hsm-tool --initialize \
+  --so-pin 3537363231383830 \
+  --pin 648219 \
+  --dkek-shares 1 \
+  --label mytoken
+```
+
+```bash
+# Initialization with no key export capability (DKEK disabled)
+sc-hsm-tool --initialize --so-pin 3537363231383830 --pin 648219
+```
+
+```bash
+# Initialization requiring two DKEK shares to reconstruct the DKEK
+sc-hsm-tool --initialize \
+  --so-pin 3537363231383830 \
+  --pin 648219 \
+  --dkek-shares 2 \
+  --pin-retry 5
+```
+
+After initialization with one or more DKEK shares, the HSM enters a pending state and does not allow key generation or import until all required shares have been imported.
+
+<Warning>
+  Initialization is irreversible. All keys on the device are permanently destroyed. Store your SO PIN and DKEK shares in a secure location before proceeding.
+</Warning>
+
+Key initialization options:
+
+| Option | Description |
+|--------|-------------|
+| `--so-pin` _sopin_ | Security Officer PIN for initialization or verification |
+| `--pin` _pin_ | Initial user PIN |
+| `--pin-retry` _n_ | Maximum wrong user PIN attempts before lockout (default: 3) |
+| `--dkek-shares` _n_ | Number of DKEK shares required; omit to disable DKEK |
+| `--label` _label_ | Token label visible in PKCS#11 |
+
+## Creating DKEK shares
+
+Create a DKEK share and save it to an encrypted file. Each share must be created before initialization or before importing shares.
+
+```bash
+# Create a DKEK share protected by a password you enter interactively
+sc-hsm-tool --create-dkek-share dkek-share-1.pbe
+```
+
+```bash
+# Create a share using a (3, 5) threshold scheme
+# A random password is generated and split into 5 shares,
+# any 3 of which are needed to reconstruct it
+sc-hsm-tool --create-dkek-share dkek-share-1.pbe \
+  --pwd-shares-threshold 3 \
+  --pwd-shares-total 5
+```
+
+<Tip>
+  Use a threshold scheme when you need multiple custodians to authorise key recovery. Distribute each password share to a separate person so that no individual can reconstruct the DKEK alone.
+</Tip>
+
+## Importing DKEK shares
+
+Import a previously created DKEK share into the SmartCard-HSM. Repeat this for each share until the required number have been imported.
+
+```bash
+# Import a single DKEK share (prompts for password)
+sc-hsm-tool --import-dkek-share dkek-share-1.pbe
+```
+
+```bash
+# Import a share whose password was split into threshold shares
+# (prompts for each password share until 3 have been entered)
+sc-hsm-tool --import-dkek-share dkek-share-1.pbe --pwd-shares-total 3
+```
+
+Once the required number of shares have been imported, the SmartCard-HSM reconstructs the DKEK internally and becomes ready for use.
+
+## Wrapping a key for backup
+
+After keys have been generated (using `pkcs11-tool` or `pkcs15-init`), wrap a key together with its description and certificate into a single backup file:
+
+```bash
+# Wrap key with reference 1 to a file
+sc-hsm-tool --wrap-key wrap-key.bin --key-reference 1 --pin 648219
+```
+
+The wrapped file contains the encrypted key material, the key description, and the associated certificate. Determine the key reference number using:
+
+```bash
+pkcs15-tool -D
+```
+
+## Unwrapping a key
+
+Restore a wrapped key into a SmartCard-HSM that holds the same DKEK:
+
+```bash
+# Unwrap into key reference 10 on a (possibly different) device
+sc-hsm-tool --unwrap-key wrap-key.bin --key-reference 10 --pin 648219
+```
+
+```bash
+# Overwrite any existing key at the target reference
+sc-hsm-tool --unwrap-key wrap-key.bin --key-reference 10 --pin 648219 --force
+```
+
+<Warning>
+  Using `--force` removes any existing key, key description, or certificate at the specified reference without further confirmation.
+</Warning>
+
+## M-of-N public key authentication
+
+SmartCard-HSM supports an optional M-of-N public key authentication scheme that requires M out of N registered public keys to authorize login. This provides a multi-party control mechanism beyond a simple PIN.
+
+### Setting up M-of-N authentication
+
+```bash
+# Initialize with M=2 required keys out of N=5 total
+sc-hsm-tool --initialize --required-pub-keys 2 --public-key-auth 5
+```
+
+```bash
+# Export a public key from key reference 1 on an existing HSM
+sc-hsm-tool --key-reference 1 --export-for-pub-key-auth ./public_key1.asn1
+```
+
+```bash
+# Register an exported public key on the HSM being initialized
+sc-hsm-tool --register-public-key ./public_key1.asn1
+```
+
+```bash
+# Check how many public keys have been registered
+sc-hsm-tool --public-key-auth-status
+```
+
+Repeat the export and register steps until all N public keys are registered.
+
+## Biometric authentication options
+
+SmartCard-HSM can be configured to use a biometric server for template-based authentication. The biometric server AID is specified as hexadecimal:
+
+```bash
+sc-hsm-tool --initialize \
+  --so-pin 3537363231383830 \
+  --pin 648219 \
+  --bio-server1 A000000167455349474E
+```
+
+## Supplying PINs and passwords
+
+Both the user PIN and SO PIN can be passed on the command line or via environment variables:
+
+```bash
+# Supply user PIN from an environment variable
+export HSM_PIN=648219
+sc-hsm-tool --wrap-key wrap-key.bin --key-reference 1 --pin env:HSM_PIN
+```
+
+<Warning>
+  Passing PINs or passwords directly on the command line exposes them to other users via process inspection tools. Prefer the `env:VARIABLE` form or interactive prompting on shared systems.
+</Warning>
+
+## Working with pkcs11-tool and pkcs15-tool
+
+`sc-hsm-tool` handles SmartCard-HSM-specific operations. Use the standard OpenSC tools for day-to-day key and certificate management:
+
+```bash
+# List objects on the HSM
+pkcs15-tool -D
+
+# Generate a key pair using PKCS#11
+pkcs11-tool --module /usr/lib/opensc-pkcs11.so \
+  --login --keypairgen --key-type EC:prime256v1 \
+  --id 01 --label "my-ec-key"
+
+# Sign data
+pkcs11-tool --module /usr/lib/opensc-pkcs11.so \
+  --login --sign --id 01 --input-file data.bin --output-file sig.bin
+```
+
+## All options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--initialize` | `-X` | Initialize the HSM, destroying all existing content |
+| `--create-dkek-share` _file_ | `-C` _file_ | Create a password-encrypted DKEK share |
+| `--import-dkek-share` _file_ | `-I` _file_ | Import a DKEK share into the HSM |
+| `--wrap-key` _file_ | `-W` _file_ | Wrap a key (with description and cert) to a file |
+| `--unwrap-key` _file_ | `-U` _file_ | Restore a wrapped key from a file |
+| `--dkek-shares` _n_ | `-s` _n_ | Number of DKEK shares required |
+| `--key-reference` _n_ | | Key reference for wrap/unwrap operations |
+| `--pin` _pin_ | | User PIN or `env:VARIABLE` |
+| `--so-pin` _sopin_ | | Security Officer PIN or `env:VARIABLE` |
+| `--pin-retry` _n_ | | Maximum user PIN retry count (default: 3) |
+| `--password` _value_ | | DKEK share password or `env:VARIABLE` |
+| `--pwd-shares-threshold` _n_ | | Minimum shares needed to reconstruct DKEK password |
+| `--pwd-shares-total` _n_ | | Total number of password shares |
+| `--force` | | Remove existing key/description/cert on unwrap |
+| `--label` _label_ | `-l` _label_ | Token label for initialization |
+| `--public-key-auth` _n_ | `-K` _n_ | Total number of public keys (N) for M-of-N auth |
+| `--required-pub-keys` _n_ | `-n` _n_ | Required public keys (M) for M-of-N auth |
+| `--register-public-key` _file_ | `-g` _file_ | Register a public key for M-of-N authentication |
+| `--export-for-pub-key-auth` _file_ | `-e` _file_ | Export a public key for M-of-N authentication |
+| `--public-key-auth-status` | `-S` | Print M-of-N public key registration status |
+| `--bio-server1` _aid_ | | AID of biometric server for template 1 |
+| `--bio-server2` _aid_ | | AID of biometric server for template 2 |
+| `--reader` _arg_ | `-r` _arg_ | Reader number or ATR |
+| `--wait` | `-w` | Wait for a card to be inserted |
+| `--verbose` | `-v` | Increase verbosity; repeat for debug output |
+
+## See also
+
+- [`pkcs15-tool`](/tools/pkcs15-tool) — list and dump PKCS#15 objects on the HSM
+- [`pkcs11-tool`](/tools/pkcs11-tool) — PKCS#11 operations including key generation and signing
+- [`opensc-tool`](/tools/opensc-tool) — low-level card inspection and APDU transmission

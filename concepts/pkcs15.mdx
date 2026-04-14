@@ -1,0 +1,131 @@
+---
+title: "PKCS#15 smart card data structures and file layout"
+description: "Learn how the PKCS#15 standard organises cryptographic objects on smart cards and how OpenSC reads, writes, and emulates these structures across cards."
+---
+
+PKCS#15 (also known as ISO/IEC 7816-15) is the standard that defines how cryptographic objects — private keys, public keys, certificates, PINs, and data objects — are stored on a smart card. Without a standard like PKCS#15, every card vendor would invent their own file layout, making interoperability impossible. OpenSC reads and writes PKCS#15 structures natively and also emulates them for cards that use proprietary layouts.
+
+## Objects stored in PKCS#15
+
+A PKCS#15 application on a card contains a hierarchy of typed objects. The core types, defined in `src/libopensc/pkcs15.h`, are:
+
+| Object type | Description |
+|---|---|
+| **Private key** | Asymmetric private key (RSA, EC, EdDSA). Stored on-card, never exported. |
+| **Public key** | Corresponding public key, readable without PIN. |
+| **Certificate** | X.509 certificate linked to a key pair. |
+| **Authentication object (PIN)** | A PIN or biometric reference that protects private key access. |
+| **Data object** | Arbitrary data such as card holder information or user-defined blobs. |
+
+Each object has a unique identifier (`sc_pkcs15_id`), a human-readable label (up to 255 characters, `SC_PKCS15_MAX_LABEL_SIZE`), and access control rules (`SC_PKCS15_CO_FLAG_PRIVATE`, `SC_PKCS15_CO_FLAG_MODIFIABLE`).
+
+### PIN attributes
+
+Authentication objects carry detailed PIN metadata in `sc_pkcs15_pin_attributes`:
+
+- `min_length`, `max_length`, `stored_length` — PIN length constraints
+- `type` — encoding: BCD (`SC_PKCS15_PIN_TYPE_BCD`), ASCII numeric, UTF-8, or ISO 9564-1
+- `flags` — whether the PIN is local, whether it is the SO-PIN, whether it needs padding, and more
+- `tries_left` / `max_tries` — retry counter for blocked PIN detection
+
+## The PKCS#15 file system
+
+OpenSC reads a card's PKCS#15 data by traversing a sequence of elementary files (EFs):
+
+```
+MF (master file)
+ └── DF.CIA or application identified via EF.DIR
+      ├── EF.ODF   — Object Directory File: list of other EFs
+      ├── EF.PrKDF — Private Key Directory File
+      ├── EF.PuKDF — Public Key Directory File
+      ├── EF.CDF   — Certificate Directory File
+      ├── EF.AODF  — Authentication Object Directory File
+      └── EF.DODF  — Data Object Directory File
+```
+
+`EF.DIR` (at path `3F00 2F00`) lists the available card applications by their application identifier (AID). OpenSC selects the PKCS#15 application and reads `EF.ODF` to discover the rest of the directory files.
+
+<Info>
+Not every card populates every directory file. OpenSC handles missing or empty EFs gracefully — if `EF.PuKDF` is absent, public keys are reconstructed from certificates instead.
+</Info>
+
+## PKCS#15 emulation
+
+Many cards — particularly national eID cards and older PKI tokens — do not use a native PKCS#15 file layout. OpenSC handles these through **PKCS#15 emulators**: card-specific code that synthesises the PKCS#15 object model from a proprietary file structure.
+
+Emulators are registered alongside card drivers and are transparently activated when OpenSC detects a supported card type. From the application's perspective there is no difference — `pkcs15-tool` and the PKCS#11 module see the same object model regardless of whether data came from native PKCS#15 files or an emulator.
+
+Cards that use PKCS#15 emulation include:
+
+- Belgian eID (belpic driver)
+- Italian CIE / CNS (itacns driver)
+- German nPA (npa driver)
+- Estonian eID (esteid2018 / esteid2025 drivers)
+- PIV cards (piv driver)
+- CAC cards (cac driver)
+- GIDS cards (gids driver)
+
+## Reading card contents with pkcs15-tool
+
+`pkcs15-tool` is the command-line interface for PKCS#15 operations:
+
+```bash
+# List all objects on the card
+pkcs15-tool --list-keys
+pkcs15-tool --list-public-keys
+pkcs15-tool --list-certificates
+pkcs15-tool --list-pins
+pkcs15-tool --list-data-objects
+
+# Read a certificate and save to a file
+pkcs15-tool --read-certificate 1 --output cert.pem
+
+# Dump all card information
+pkcs15-tool --dump
+```
+
+<Tip>
+Add `--verbose` to see the raw file paths and access conditions OpenSC resolves while reading each object.
+</Tip>
+
+## Card initialization and PKCS#15 profiles
+
+When initialising a blank card, `pkcs15-init` writes a PKCS#15 file system from scratch. The layout — which EFs to create, key sizes to allow, PIN policies to enforce — is controlled by a **profile file**.
+
+Profile files live in `src/pkcs15init/` in the OpenSC source tree and are also installed to the system profile directory (typically `/usr/share/opensc/` on Linux). Each supported card type has its own profile:
+
+```
+pkcs15.profile        — generic baseline profile
+cardos.profile        — Siemens/Atos CardOS
+starcos.profile       — Giesecke+Devrient STARCOS
+myeid.profile         — Aventra MyEID
+openpgp.profile       — OpenPGP card
+gids.profile          — Microsoft GIDS
+```
+
+Profiles are text files that declare file sizes, key algorithm constraints, and PIN requirements. You can override individual settings on the `pkcs15-init` command line.
+
+```bash
+# Initialise a card using the default profile
+pkcs15-init --create-pkcs15
+
+# Generate an RSA key pair and store it on the card
+pkcs15-init --generate-key rsa/2048 --auth-id 01 --label "Signing key"
+
+# Import a certificate
+pkcs15-init --store-certificate cert.pem --id 01 --label "User certificate"
+```
+
+## Relation to PKCS#11
+
+The PKCS#11 module in OpenSC is built on top of the PKCS#15 layer. When an application calls `C_FindObjects` to list token objects, OpenSC internally:
+
+1. Opens the card and reads the PKCS#15 directory files (or runs the emulator).
+2. Builds an in-memory list of `sc_pkcs15_object` structures.
+3. Translates each PKCS#15 object to a PKCS#11 object with the corresponding `CKA_*` attributes.
+
+This means every key and certificate visible via `pkcs15-tool` is also visible via `pkcs11-tool --list-objects`, and vice versa. The two interfaces are views onto the same underlying data.
+
+<Note>
+PKCS#15 object identifiers (`sc_pkcs15_id`) are exposed as the `CKA_ID` attribute in PKCS#11. Use the same ID value when referencing a key in both interfaces.
+</Note>

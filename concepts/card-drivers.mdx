@@ -1,0 +1,151 @@
+---
+title: "Smart card drivers: ATR detection and supported cards"
+description: "Understand how OpenSC card drivers work, how ATR-based auto-detection selects the right driver, and which card families are supported out of the box."
+---
+
+A card driver is a plugin within `libopensc` that knows how to talk to a specific smart card or family of cards. Every card has its own APDU command set, file structure, and security model. Card drivers encapsulate those differences so that higher layers — the PKCS#11 module, `pkcs15-tool`, and application code — can work with any supported card through a uniform API.
+
+## How driver selection works
+
+When a card is inserted into a reader, `libopensc` reads the card's **ATR** (Answer To Reset) — a byte string the card transmits on power-up that identifies its type and capabilities. OpenSC then walks the list of registered card drivers in order and asks each one whether it matches the ATR.
+
+The first driver that claims the card is bound to the `sc_card` object. If no driver matches, OpenSC falls back to the generic default driver, which provides basic ISO 7816-4 file operations without card-specific optimisations.
+
+<Note>
+ATR matching is defined per driver using pattern/mask tables. The PIV driver additionally performs application selection (by AID) because multiple physical card platforms can carry a PIV applet.
+</Note>
+
+## The default driver
+
+`sc_get_default_driver()` (declared in `src/libopensc/cards.h`) handles cards that match no other driver. It implements generic ISO 7816-4 operations: `SELECT FILE`, `READ BINARY`, `UPDATE BINARY`, `VERIFY` (PIN), and the generic security environment commands. It is enough to browse a card's file system with `opensc-explorer` but does not support card-specific optimisations or PKCS#15 emulation.
+
+## Supported card drivers
+
+The full list of registered drivers is declared as `sc_card_driver_t *` getter functions in `src/libopensc/cards.h`. The table below groups them by family:
+
+### PKI and general-purpose cards
+
+| Driver | Card family | Types |
+|---|---|---|
+| `cardos` | Siemens/Atos CardOS M4, V5 | `SC_CARD_TYPE_CARDOS_*` (base 1000) |
+| `starcos` | Giesecke+Devrient STARCOS 3.x | `SC_CARD_TYPE_STARCOS_*` (base 7000) |
+| `setcos` | Setcos PKI, eID v2 | `SC_CARD_TYPE_SETCOS_*` (base 6000) |
+| `tcos` | Telekom/TCOS v2, v3 | `SC_CARD_TYPE_TCOS_*` (base 8000) |
+| `myeid` | Aventra MyEID, OsEID | `SC_CARD_TYPE_MYEID_*` (base 20000) |
+| `sc_hsm` | SmartCard-HSM, GoID | `SC_CARD_TYPE_SC_HSM` (26000) |
+| `idprime` | Thales IDPrime 3810, 830, 930, 940, 840 | `SC_CARD_TYPE_IDPRIME_*` (base 37000) |
+| `entersafe` | EnterSafe FTCOS, ePass2003, EJAVA | `SC_CARD_TYPE_ENTERSAFE_*` (base 19000) |
+| `masktech` | MaskTech cards | `SC_CARD_TYPE_MASKTECH_*` (base 29000) |
+| `dtrust` | D-Trust signature cards v4.x, v5.x | `SC_CARD_TYPE_DTRUST_*` (base 42000) |
+
+### Government / standard specifications
+
+| Driver | Standard / Card | Types |
+|---|---|---|
+| `piv` | NIST SP 800-73-4 PIV, YubiKey PIV | `SC_CARD_TYPE_PIV_II_*` (base 14000) |
+| `cac` / `cac1` | US DoD Common Access Card | `SC_CARD_TYPE_CAC_*` (base 33000) |
+| `gids` | Microsoft GIDS v1, v2 | `SC_CARD_TYPE_GIDS_*` (base 30000) |
+| `coolkey` | Coolkey applet (RHCS tokens) | `SC_CARD_TYPE_COOLKEY_*` (base 32000) |
+| `jpki` | Japanese My Number JPKI | `SC_CARD_TYPE_JPKI_*` (base 31000) |
+| `iasecc` | IAS/ECC (Gemalto, Oberthur, Sagem) | `SC_CARD_TYPE_IASECC_*` (base 25000) |
+
+### OpenPGP
+
+| Driver | Card | Types |
+|---|---|---|
+| `openpgp` | OpenPGP card v1, v2, v3, GnuK | `SC_CARD_TYPE_OPENPGP_*` (base 9000) |
+
+### National eID cards
+
+| Driver | Country / Card | Types |
+|---|---|---|
+| `esteid2018` / `esteid2025` | Estonian eID, Finnish eID, Latvian eID | `SC_CARD_TYPE_ESTEID_2018` (35000+) |
+| `belpic` | Belgian eID | `SC_CARD_TYPE_BELPIC_*` (base 12000) |
+| `npa` | German nPA | `SC_CARD_TYPE_NPA` (34000) |
+| `dnie` | Spanish DNIe | `SC_CARD_TYPE_DNIE_*` (base 27000) |
+| `itacns` | Italian CIE v1/v2, CNS | `SC_CARD_TYPE_ITACNS_*` (base 23000) |
+| `skeid` | Slovak eID v3 | `SC_CARD_TYPE_SKEID_*` (base 40000) |
+| `eoi` | Austrian eOI | `SC_CARD_TYPE_EOI` (41000) |
+| `lteid` | Lithuanian eID | `SC_CARD_TYPE_LTEID` (43000) |
+| `srbeid` | Serbian eID (CardEdge applet) | `SC_CARD_TYPE_SRBEID_*` (base 44000) |
+| `edo` | eDO cards | `SC_CARD_TYPE_EDO` (38000) |
+
+### Java applet-based cards
+
+| Driver | Applet | Types |
+|---|---|---|
+| `muscle` | MuscleApplet v1, v2 | `SC_CARD_TYPE_MUSCLE_*` (base 15000) |
+| `isoApplet` | IsoApplet on JavaCard | `SC_CARD_TYPE_ISO_APPLET_*` (base 28000) |
+| `nqApplet` | NQ-Applet on JCOP4 | `SC_CARD_TYPE_NQ_APPLET` (39000) |
+| `asepcos` | Athena APCOS | `SC_CARD_TYPE_ASEPCOS_*` (base 17000) |
+
+### Other drivers
+
+| Driver | Card | Notes |
+|---|---|---|
+| `oberthur` / `authentic` | Oberthur AuthentIC v3.2, CosmopolIC | `SC_CARD_TYPE_OBERTHUR_*` (base 11000) |
+| `mcrd` | MCRD (eMRTD) | `SC_CARD_TYPE_MCRD_*` (base 5000) |
+| `gemsafeV1` | Gemalto GemSafe v1, PTEID, SEEID | `SC_CARD_TYPE_GEMSAFEV1_*` (base 21000) |
+| `rutoken` / `rtecp` | Rutoken ECP, Lite | `SC_CARD_TYPE_RUTOKENS` (36000) |
+| `cryptoflex` / `cyberflex` | Schlumberger Cryptoflex/Cyberflex | `SC_CARD_TYPE_FLEX_*` (base 2000) |
+| `atrust_acos` | A-Trust ACOS | — |
+
+## Identifying your card
+
+Before configuring OpenSC, identify exactly which card you have:
+
+```bash
+# Print the ATR of the inserted card
+opensc-tool --atr
+
+# List all drivers compiled into this build
+opensc-tool --list-drivers
+
+# Show which driver OpenSC selected for the current card
+opensc-tool --name
+```
+
+Example output from `opensc-tool --atr`:
+
+```
+3B:9F:96:80:1F:C3:80:31:A0:73:BE:21:13:67:43:20:07:18:00:00:01:A5
+```
+
+You can look up ATRs in the [OpenSC ATR database](https://ludovicrousseau.blogspot.com/) or in the `src/libopensc/card-*.c` source files.
+
+## Overriding automatic driver selection
+
+If auto-detection picks the wrong driver, or if you are testing a new card, you can force a specific driver:
+
+```bash
+# Force the PIV driver
+pkcs11-tool --module opensc-pkcs11.so --card-driver piv --list-slots
+
+# With opensc-tool
+opensc-tool --card-driver piv --list-files
+```
+
+In `opensc.conf` you can set a per-reader override:
+
+```
+# opensc.conf
+reader_driver pcsc {
+    reader MyReader {
+        card_driver = piv;
+    }
+}
+```
+
+## PKCS#15 emulators
+
+Drivers for cards that do not use a native PKCS#15 file layout register a **PKCS#15 emulator** alongside the card driver. The emulator synthesises the PKCS#15 object model — private keys, certificates, PINs — from the card's proprietary file structure.
+
+From the application's perspective there is no difference: `pkcs15-tool --dump` and `pkcs11-tool --list-objects` produce the same output whether data comes from native PKCS#15 files or an emulator.
+
+<Info>
+The PIV, CAC, GIDS, nPA, belpic, esteid, and itacns drivers all use PKCS#15 emulation. See [PKCS#15 data structures](/concepts/pkcs15) for a full explanation.
+</Info>
+
+## Algorithm capabilities
+
+Each card driver advertises the algorithms it supports by populating `sc_supported_algo_info` structures on the `sc_card` object. OpenSC uses this information to select the correct padding and hashing strategy when the PKCS#11 layer constructs a `sc_security_env` for a signing or decryption operation. If a requested mechanism is not in the card's capability list, OpenSC returns `CKR_MECHANISM_INVALID` before sending any APDU.

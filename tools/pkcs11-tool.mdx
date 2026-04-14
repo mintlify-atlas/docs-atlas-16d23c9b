@@ -1,0 +1,303 @@
+---
+title: "pkcs11-tool: manage PKCS#11 security tokens"
+description: "Manage keys, certificates, and data objects on PKCS#11 security tokens — list slots, generate key pairs, sign data, and write objects."
+---
+
+`pkcs11-tool` is a command-line utility for managing and using PKCS#11 security tokens such as smart cards and USB HSMs. You can use it to list slots and objects, generate RSA and EC key pairs on the token, perform cryptographic operations, write certificates and keys, and manage PINs — all through a standard PKCS#11 library interface.
+
+## Common workflows
+
+### List available slots
+
+```bash
+pkcs11-tool --list-slots
+```
+
+To show only slots that contain a token:
+
+```bash
+pkcs11-tool --list-token-slots
+```
+
+### List objects on a token
+
+```bash
+pkcs11-tool --list-objects
+```
+
+Filter by type:
+
+```bash
+pkcs11-tool --list-objects --type cert
+pkcs11-tool --login --list-objects --type privkey
+```
+
+### Generate key pairs
+
+Generate a 2048-bit RSA key pair on the token:
+
+```bash
+pkcs11-tool --keypairgen --key-type RSA:2048 --id 01 --label "My Key" --login
+```
+
+Generate an EC key pair using the P-256 curve:
+
+```bash
+pkcs11-tool --keypairgen --key-type EC:prime256v1 --id 02 --label "EC Key" --login
+```
+
+Generate an extractable RSA key pair:
+
+```bash
+pkcs11-tool --login --keypairgen --key-type RSA:2048 --extractable
+```
+
+### Sign data
+
+Sign a file using a private key and the RSA-PKCS mechanism:
+
+```bash
+pkcs11-tool --sign --id 01 --mechanism RSA-PKCS \
+  --input-file data.txt --output-file sig.bin --login
+```
+
+Sign using SHA256-RSA-PKCS:
+
+```bash
+pkcs11-tool --sign --id 01 --mechanism SHA256-RSA-PKCS \
+  --input-file data.txt --output-file sig.bin --login
+```
+
+### Verify a signature
+
+```bash
+pkcs11-tool --verify --id 01 --mechanism RSA-PKCS \
+  --input-file data.txt --signature-file sig.bin
+```
+
+### Read a certificate
+
+Read a certificate in DER format and convert to PEM with OpenSSL:
+
+```bash
+pkcs11-tool --read-object --id $CERT_ID --type cert \
+  --output-file cert.der
+openssl x509 -inform DER -in cert.der -outform PEM > cert.pem
+```
+
+### Write an object to the token
+
+```bash
+pkcs11-tool --login --write-object certificate.der --type cert
+pkcs11-tool --write-object cert.pem --type cert --id 01 --login
+```
+
+### Import an EC key pair generated with OpenSSL
+
+```bash
+openssl genpkey -out EC_private.der -outform DER \
+  -algorithm EC -pkeyopt ec_paramgen_curve:P-521
+
+pkcs11-tool --write-object EC_private.der --id "$ID" \
+  --type privkey --label "EC private key" -p "$PIN"
+
+openssl pkey -in EC_private.der -out EC_public.der \
+  -pubout -inform DER -outform DER
+
+pkcs11-tool --write-object EC_public.der --id "$ID" \
+  --type pubkey --label "EC public key" -p "$PIN"
+```
+
+### Encrypt and decrypt with a symmetric key
+
+```bash
+pkcs11-tool --login --encrypt --id 85 --mechanism AES-CBC-PAD \
+  --iv "00000000000000000000000000000000" \
+  --input-file file.txt --output-file encrypted.data
+
+pkcs11-tool --login --decrypt --id 85 --mechanism AES-CBC-PAD \
+  --iv "00000000000000000000000000000000" \
+  --input-file encrypted.data --output-file decrypted.txt
+```
+
+### Change PIN
+
+```bash
+pkcs11-tool --change-pin
+```
+
+Initialize the user PIN for the first time (requires SO login):
+
+```bash
+pkcs11-tool --login --login-type so --init-pin
+```
+
+### Initialize a token
+
+```bash
+pkcs11-tool --init-token --label "MyToken" --so-pin 12345678
+```
+
+## Options reference
+
+### Token and slot selection
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--module` *mod* | | Load the specified PKCS#11 library (`.so` or `.dll`). |
+| `--slot` *id* | | Slot ID to use (decimal or `0x`-prefixed hex). |
+| `--slot-description` *desc* | | Select slot by description string. |
+| `--slot-index` *index* | | Select slot by index. |
+| `--token-label` *label* | | Select the first slot whose token matches this label. |
+| `--list-slots` | `-L` | List all available slots. |
+| `--list-token-slots` | `-T` | List slots that contain a token. |
+| `--list-interfaces` | | List interfaces of a PKCS#11 3.0 library. |
+| `--show-info` | `-I` | Display general token information. |
+
+### Authentication
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--login` | `-l` | Authenticate to the token before performing operations. Not needed if `--pin` is supplied. |
+| `--login-type` *type* | | Login type: `user` (default), `so`, or `context-specific`. |
+| `--pin` *pin* | `-p` | User PIN. Use `env:VARIABLE` to read from an environment variable. Sets `--login` implicitly. |
+| `--so-pin` *pin* | | Security Officer PIN. Use `env:VARIABLE` to read from an environment variable. |
+| `--puk` *puk* | | User PUK for unblocking. |
+| `--new-pin` *pin* | | New PIN value for change or init operations. |
+
+<Warning>
+Passing PINs on the command line is a security risk — other users on the system can read process arguments with `ps`. Prefer `env:VARIABLE` or let the tool prompt interactively.
+</Warning>
+
+### PIN management
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--change-pin` | `-c` | Change the user PIN. |
+| `--init-pin` | | Set the user PIN for the first time. |
+| `--init-token` | | Initialize a token and set the SO PIN and label. |
+| `--unlock-pin` | | Unlock the user PIN. |
+
+### Key generation
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--keypairgen` | `-k` | Generate a new asymmetric key pair. |
+| `--keygen` | | Generate a new symmetric key. |
+| `--key-type` *spec* | | Key type and parameters, e.g. `RSA:2048`, `EC:prime256v1`, `EC:ED25519`, `AES:16`, `DES3:24`. |
+| `--usage-sign` | | Set the sign/verify usage flag. |
+| `--usage-decrypt` | | Set the decrypt/encrypt usage flag. |
+| `--usage-derive` | | Set the derive usage flag (EC only). |
+| `--usage-wrap` | | Set the wrap usage flag. |
+| `--usage-encapsulate` | | Set the encapsulate/decapsulate usage flag. |
+
+### Object identification
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--id` *id* | `-d` | Hex ID of the object to operate on. |
+| `--label` *name* | `-a` | Object label (or token label for `--init-token`). |
+| `--type` *type* | `-y` | Object type: `cert`, `privkey`, `pubkey`, `secrkey`, or `data`. |
+| `--object-index` *index* | | Select object by index when multiple objects match. |
+| `--application-label` *label* | | Application label for data objects. |
+| `--application-id` *id* | | Application ID for data objects. |
+| `--issuer` *data* | | Issuer in hex (for `cert` objects). |
+| `--subject` *data* | | Subject in hex (for `cert`, `privkey`, `pubkey`). |
+| `--set-id` *id* | `-e` | Change the `CKA_ID` attribute of an object. |
+
+### Cryptographic operations
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--sign` | `-s` | Sign data. |
+| `--verify` | | Verify a signature. |
+| `--decrypt` | | Decrypt data. |
+| `--encrypt` | | Encrypt data. |
+| `--hash` | `-h` | Hash data. |
+| `--derive` | | Derive a secret key from another key and data. |
+| `--wrap` | | Wrap a key. |
+| `--unwrap` | | Unwrap a key. |
+| `--mechanism` *mech* | `-m` | PKCS#11 mechanism name or hex value (e.g. `0x80001234`). Use `--list-mechanisms` to see supported values. |
+| `--hash-algorithm` *alg* | | Hash algorithm for RSA-PKCS-PSS or RSA-OAEP: `SHA-1` (default), `SHA256`, `SHA384`, `SHA512`, `SHA224`. |
+| `--mgf` *func* | | MGF function for RSA-PKCS-PSS or RSA-OAEP: `MGF1-SHA1` through `MGF1-SHA512`. |
+| `--salt-len` *bytes* | | Salt length for RSA-PSS. `-1` = digest length (default), `-2`/`-3` = maximum. |
+| `--signature-format` *fmt* | | ECDSA signature format: `rs` (default), `sequence`, `openssl`. |
+| `--signature-file` *file* | | Signature file for `--verify`. |
+| `--iv` *data* | | Initialization vector for symmetric ciphers (hex string). |
+| `--aad` *data* | | Additional authenticated data for AEAD ciphers (hex string). |
+| `--tag-bits-len` *num* | | Tag length in bits for AEAD ciphers. |
+| `--mac-general-param` *num* | | MAC length in bytes for general-length MAC mechanisms. |
+| `--generate-random` *num* | | Generate *num* bytes of random data. |
+
+### Input and output
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--input-file` *file* | `-i` | Input file path. |
+| `--output-file` *file* | `-o` | Output file path. |
+| `--read-object` | `-r` | Read an object's `CKA_VALUE` (use with `--type`). |
+| `--write-object` *file* | `-w` | Write a DER-encoded key or certificate to the token. |
+| `--delete-object` | `-b` | Delete an object from the token. |
+| `--attr-from` *file* | | Read DER certificate and derive CKA attributes (e.g. `CKA_SUBJECT`). |
+| `--public-key-info` | | Read public key as SubjectPublicKeyInfo (use with `--read-object --type public`). |
+
+### Object attributes
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--sensitive` | | Set `CKA_SENSITIVE` — key cannot be revealed in plaintext. |
+| `--extractable` | | Set `CKA_EXTRACTABLE` — key can be extracted. |
+| `--private` | | Set `CKA_PRIVATE` — object visible only after login. |
+| `--always-auth` | | Set `CKA_ALWAYS_AUTH` — PIN required for each sign or decrypt. |
+| `--undestroyable` | | Set `CKA_DESTROYABLE` to false. |
+| `--allowed-mechanisms` *mechs* | | Comma-separated list of allowed mechanisms for this key. |
+| `--session-rw` | | Open the session with `CKF_RW_SESSION`. |
+
+### General
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--list-mechanisms` | `-M` | List mechanisms supported by the token. |
+| `--list-objects` | `-O` | List all objects (filter with `--type`, `--id`, `--label`). |
+| `--test` | `-t` | Run basic token functionality tests. |
+| `--test-ec` | | Test EC operations. |
+| `--test-hotplug` | | Test hotplug capabilities. |
+| `--test-fork` | | Test fork behavior with `C_Initialize()`. |
+| `--use-locking` | | Enable OS thread locking in the PKCS#11 module. |
+| `--allow-sw` | | Allow software mechanisms without `CKF_HW`. Useful for software tokens. |
+| `--uri` *value* | | Specify a PKCS#11 URI for module, slot, token, or object. |
+| `--uri-with-slot-id` | | Include the slot ID in the PKCS#11 URI. |
+| `--moz-cert` *file* | `-z` | Test Mozilla-style key pair generation and certificate request. |
+| `--verbose` | `-v` | Increase verbosity. |
+
+## Using a custom PKCS#11 module
+
+By default, `pkcs11-tool` uses the system OpenSC PKCS#11 library. To use a different library, pass `--module`:
+
+```bash
+pkcs11-tool --module /usr/lib/libykcs11.so --list-slots
+pkcs11-tool --module /usr/local/lib/opensc-pkcs11.so --list-objects
+```
+
+<Tip>
+On most Linux systems, the OpenSC PKCS#11 module is at `/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so` or `/usr/lib/opensc-pkcs11.so`. On macOS it is typically at `/Library/OpenSC/lib/opensc-pkcs11.so`.
+</Tip>
+
+## Debugging with pkcs11-spy
+
+OpenSC ships `pkcs11-spy`, a PKCS#11 module that logs all calls to another library and is useful for diagnosing issues. Set the `PKCS11SPY` environment variable to the real module path, then load `pkcs11-spy` itself:
+
+```bash
+export PKCS11SPY=/usr/lib/opensc-pkcs11.so
+pkcs11-tool --module /usr/lib/pkcs11-spy.so --list-slots
+```
+
+For OpenSC library-level debug output, set `OPENSC_DEBUG` to a non-zero number:
+
+```bash
+OPENSC_DEBUG=9 pkcs11-tool --list-slots
+```
+
+<Note>
+The `--verbose` flag increases `pkcs11-tool`'s own verbosity but does not affect the OpenSC library debug level. Use the `OPENSC_DEBUG` environment variable to enable library-level tracing.
+</Note>

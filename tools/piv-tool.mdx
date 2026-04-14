@@ -1,0 +1,187 @@
+---
+title: "piv-tool: initialize and manage PIV smart cards"
+description: "Initialize and manage NIST SP 800-73 PIV smart cards for US government CAC and PIV authentication, including key generation and certificate loading."
+---
+
+`piv-tool` is a command-line utility for performing operations on HSPD-12 PIV smart cards as defined in [NIST SP 800-73](https://csrc.nist.gov/pubs/sp/800/73/pt1/5/final). PIV (Personal Identity Verification) cards are the standard credential for US federal employees and contractors, used in Common Access Cards (CAC) and civilian PIV cards. The tool handles card initialization, on-card key generation, certificate and object loading, and raw APDU transmission for test and development workflows.
+
+<Warning>
+  `piv-tool` is intended for use with test cards and card personalization workflows. Do not use it to modify production PIV cards issued by a federal agency unless you are an authorized card management system operator.
+</Warning>
+
+## PIV card overview
+
+A PIV card holds up to 24 key pairs and associated certificates in named slots defined by NIST SP 800-73:
+
+| Slot | Hex | Purpose |
+|------|-----|---------|
+| PIV Authentication | `9A` | Authenticating the card holder to systems |
+| Digital Signature | `9C` | Non-repudiation digital signatures (PIN required per use) |
+| Key Management | `9D` | Encryption key management (key transport) |
+| Card Authentication | `9E` | Card-only authentication without PIN |
+| Retired 1–20 | `82`–`95` | Historical key management certificates |
+
+In addition to key slots, the card stores data objects including the CHUID (Card Holder Unique Identifier), facial image, fingerprint templates, and printed information.
+
+## Authenticating to the card
+
+Most write operations require prior admin authentication using the card management key (a 2DES, 3DES, or AES key provided by the card vendor or set during personalization). Store the key in a file and reference it with the `PIV_EXT_AUTH_KEY` environment variable.
+
+```bash
+# External authentication with 3DES management key (ref 9B, alg 03)
+export PIV_EXT_AUTH_KEY=/path/to/mgmt-key.bin
+piv-tool --admin A:9B:03
+
+# Mutual authentication with AES-128 management key
+export PIV_EXT_AUTH_KEY=/path/to/aes-key.bin
+piv-tool --admin M:9B:08
+```
+
+The argument format is `{A|M}:<ref>:<alg>`:
+- `A` — External Authentication (card authenticates to host)
+- `M` — Mutual Authentication (both sides authenticate)
+- `<ref>` — Key reference, normally `9B`
+- `<alg>` — Algorithm: `01` (2DES), `03` (3DES), `08` (AES-128), `0A` (AES-192), `0C` (AES-256)
+
+The key file is either a raw binary file matching the key length or a colon-delimited hex text file in the format `XX:XX:XX:...`.
+
+## Generating key pairs
+
+Key pairs are generated on-card. The public key is written to the output file specified with `--out`.
+
+```bash
+# Generate RSA-2048 key in the PIV Authentication slot
+export PIV_EXT_AUTH_KEY=/path/to/mgmt-key.bin
+piv-tool --admin A:9B:03 --genkey 9A:07 --out pubkey-9A.pem
+
+# Generate ECC P-256 key in the Digital Signature slot
+piv-tool --admin A:9B:03 --genkey 9C:11 --out pubkey-9C.pem
+
+# Generate ECC P-384 key in the Key Management slot
+piv-tool --admin A:9B:03 --genkey 9D:14 --out pubkey-9D.pem
+```
+
+The `--genkey` argument format is `<ref>:<alg>`:
+
+| `<alg>` | Algorithm |
+|---------|-----------|
+| `05` | RSA 3072 |
+| `06` | RSA 1024 |
+| `07` | RSA 2048 |
+| `11` | ECC P-256 |
+| `14` | ECC P-384 |
+| `16` | RSA 4096 (non-standard) |
+| `E0` | EdDSA 25519 (non-standard) |
+| `E1` | XEdDSA 25519 (non-standard) |
+
+<Note>
+  Algorithm values `16`, `E0`, and `E1` are not part of the NIST SP 800-73 specification. Only use them with cards or tokens that explicitly advertise support.
+</Note>
+
+## Loading certificates
+
+After generating a key pair externally or obtaining a certificate from a CA, load it into the matching slot:
+
+```bash
+# Load a PEM or DER certificate into the PIV Authentication slot
+piv-tool --admin A:9B:03 --cert 9A --in certificate-9A.der
+
+# Load a gzip-compressed certificate to save card storage space
+piv-tool --admin A:9B:03 --compresscert 9C --in certificate-9C.der.gz
+```
+
+The `<ref>` value for `--cert` and `--compresscert` uses the same slot identifiers as `--genkey` (`9A`, `9C`, `9D`, `9E`, `82`–`95`).
+
+## Loading data objects
+
+Data objects other than certificates are loaded using their container ID as defined in NIST SP 800-73-5 Part 1, Table 2. The ID is given without a `0x` prefix.
+
+```bash
+# Load a CHUID object (container ID 3000)
+piv-tool --admin A:9B:03 --object 3000 --in chuid.bin
+```
+
+<Tip>
+  To enable the 20 retired key slots, you must first create a Key History Object. See the example below.
+</Tip>
+
+## Printing card information
+
+```bash
+# Print the card driver name
+piv-tool --name
+
+# Print the serial number derived from the CHUID object (hex)
+piv-tool --serial
+
+# Print properties of all key slots (requires admin authentication)
+export PIV_EXT_AUTH_KEY=/path/to/mgmt-key.bin
+piv-tool --admin A:9B:03 --key-slots-discovery
+```
+
+## Sending raw APDUs
+
+For advanced operations not covered by other options, you can send arbitrary APDU commands directly to the card:
+
+```bash
+piv-tool --admin A:9B:03 \
+  --send-apdu 00:DB:3F:FF:0F:5C:03:5F:C1:0C:53:08:C1:01:14:C2:01:00:FE:00
+```
+
+The APDU is given as colon-delimited hex bytes. The `--send-apdu` option can be repeated to send multiple APDUs in sequence.
+
+### Example: creating a Key History Object
+
+Before using the 20 retired key slots (`82`–`95`), load a Key History Object to indicate how many retired keys the card holds:
+
+```bash
+piv-tool --admin A:9B:03 \
+  --send-apdu "00:DB:3F:FF:0F:5C:03:5F:C1:0C:53:08:C1:01:14:C2:01:00:FE:00"
+```
+
+## Input and output files
+
+Operations that produce output (such as `--genkey`) write to the file given by `--out`. Operations that consume data (such as `--cert` and `--object`) read from the file given by `--in`.
+
+```bash
+piv-tool --genkey 9A:07 --out /tmp/pubkey.pem
+piv-tool --cert 9A --in /tmp/signed-cert.der
+```
+
+## Reader selection
+
+```bash
+# Use reader number 1
+piv-tool --reader 1
+
+# Select by ATR
+piv-tool --reader "3B:7D:96:00:00:80:31:80:65:B0:83:11:13:AC:83:90:00"
+
+# Wait for card insertion before proceeding
+piv-tool --name --wait
+```
+
+## All options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--name` | `-n` | Print the card driver name |
+| `--serial` | | Print the serial number from the CHUID |
+| `--admin` _arg_ | `-A` _arg_ | Authenticate with management key (`{A\|M}:<ref>:<alg>`) |
+| `--genkey` _arg_ | `-G` _arg_ | Generate key pair (`<ref>:<alg>`); outputs public key |
+| `--cert` _ref_ | `-C` _ref_ | Load a certificate into slot _ref_ |
+| `--compresscert` _ref_ | `-Z` _ref_ | Load a gzip-compressed certificate into slot _ref_ |
+| `--object` _containerID_ | `-O` _containerID_ | Load a data object by container ID |
+| `--key-slots-discovery` | | Print key slot properties (requires admin auth) |
+| `--in` _file_ | `-i` _file_ | Input file |
+| `--out` _file_ | `-o` _file_ | Output file |
+| `--send-apdu` _apdu_ | `-s` _apdu_ | Send raw APDU (`AA:BB:CC:...`); repeatable |
+| `--reader` _arg_ | `-r` _arg_ | Reader number or ATR |
+| `--wait` | `-w` | Wait for a card to be inserted |
+| `--verbose` | `-v` | Increase verbosity; repeat for debug output |
+
+## See also
+
+- [`pkcs15-tool`](/tools/pkcs15-tool) — list certificates and keys on any OpenSC-supported card
+- [`pkcs11-tool`](/tools/pkcs11-tool) — PKCS#11 operations including signing and key generation
+- [`opensc-tool`](/tools/opensc-tool) — low-level card inspection and APDU transmission

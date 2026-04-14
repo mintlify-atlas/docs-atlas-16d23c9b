@@ -1,0 +1,123 @@
+---
+title: "OpenSC layered architecture and component overview"
+description: "Learn how OpenSC's layered architecture connects applications to smart cards through PKCS#11, PKCS#15, and card drivers across all major platforms."
+---
+
+OpenSC is built as a layered middleware stack. Applications at the top never speak directly to a smart card — instead, each layer handles a specific concern, from high-level cryptographic operations down to raw APDU bytes sent over a card reader. Understanding this stack helps you diagnose problems, choose the right integration point, and extend OpenSC with new card support.
+
+## The layer stack
+
+From application to card, data flows through six distinct layers:
+
+```
+Application (browser, SSH client, VPN, etc.)
+       │
+       ▼
+Integration layer: PKCS#11 module / PKCS#15 library / Windows MiniDriver
+       │
+       ▼
+libopensc (core library: sc_context, sc_card, sc_reader)
+       │
+       ▼
+Card driver (CardOS, PIV, OpenPGP, GIDS, …)
+       │
+       ▼
+Reader driver (PC/SC, CT-API, CryptoTokenKit)
+       │
+       ▼
+Smart card / security token
+```
+
+Each layer has a single responsibility and communicates with the one below it through a defined C API declared in `src/libopensc/opensc.h`.
+
+## Layer descriptions
+
+### Applications
+
+Any program that needs to use a smart card key or certificate sits at the top. Common examples include Firefox (TLS client certificates), OpenSSH (public-key authentication), OpenVPN (mutual TLS), and Windows logon. These applications are not OpenSC code — they call into OpenSC through one of the three integration points described below.
+
+### Integration layer
+
+OpenSC exposes three stable interfaces for applications:
+
+<CardGroup cols={3}>
+  <Card title="PKCS#11 module" icon="shield-halved" href="/concepts/pkcs11">
+    A shared library (`opensc-pkcs11.so` on Linux and macOS, `opensc-pkcs11.dll` on Windows) implementing the OASIS PKCS#11 standard. Any PKCS#11-aware application can load it.
+  </Card>
+  <Card title="PKCS#15 library" icon="id-card" href="/concepts/pkcs15">
+    The `libopensc` PKCS#15 API lets custom applications enumerate and use objects stored on a card using the ISO 7816-15 data model.
+  </Card>
+  <Card title="Windows MiniDriver" icon="windows">
+    `opensc-minidriver.dll` provides the Windows Smart Card MiniDriver interface. Windows uses this for logon, CNG, and the built-in certificate store.
+  </Card>
+</CardGroup>
+
+### libopensc
+
+`libopensc` is the core shared library (`libopensc.so` / `libopensc.dylib` / `opensc.dll`). It manages three primary objects defined in `src/libopensc/opensc.h`:
+
+- **`sc_context`** — a library context holding configuration, loaded drivers, and a list of available readers
+- **`sc_reader`** — a handle to a physical card reader device
+- **`sc_card`** — a handle to a connected smart card, bound to the matching card driver
+
+`libopensc` implements session management, file system traversal (selecting and reading elementary files), PIN verification, and the security environment setup needed before a cryptographic operation (`sc_security_env` in `opensc.h`).
+
+### Card drivers
+
+A card driver implements the operations defined in `sc_card_driver_t` for a specific card type or family. When a card is inserted, OpenSC reads its ATR (Answer To Reset) and asks each registered driver whether it recognises the card. The first matching driver is bound to the `sc_card` object.
+
+Card drivers handle the card-specific APDU command set. For example, the PIV driver knows how to talk to NIST SP 800-73-4 applets, while the OpenPGP driver understands OpenPGP card commands. See [Card drivers](/concepts/card-drivers) for the full list.
+
+### Reader drivers
+
+Reader drivers abstract the physical interface between the host computer and the card reader. OpenSC supports three reader backends:
+
+| Backend | Description |
+|---|---|
+| **PC/SC** | The standard Windows Smart Card Resource Manager and `pcscd` on Linux/macOS. Default on all platforms. |
+| **CT-API** | Legacy chipcard terminal API, used with older hardware. |
+| **CryptoTokenKit** | Apple's framework for smart card access on macOS 10.12 and later. |
+
+The reader driver is selected at context initialisation time based on the `opensc.conf` configuration.
+
+### Smart card / security token
+
+At the bottom sits the physical card or USB token. OpenSC communicates with it exclusively by exchanging APDUs (Application Protocol Data Units) defined in ISO/IEC 7816.
+
+## Supported operations
+
+`opensc.h` defines the full set of security operations that can be requested:
+
+| Constant | Value | Description |
+|---|---|---|
+| `SC_SEC_OPERATION_DECIPHER` | `0x0001` | Asymmetric decryption |
+| `SC_SEC_OPERATION_SIGN` | `0x0002` | Digital signature |
+| `SC_SEC_OPERATION_AUTHENTICATE` | `0x0003` | Authentication |
+| `SC_SEC_OPERATION_DERIVE` | `0x0004` | Key derivation |
+| `SC_SEC_OPERATION_WRAP` | `0x0005` | Key wrapping |
+| `SC_SEC_OPERATION_UNWRAP` | `0x0006` | Key unwrapping |
+| `SC_SEC_OPERATION_ENCRYPT_SYM` | `0x0007` | Symmetric encryption |
+| `SC_SEC_OPERATION_DECRYPT_SYM` | `0x0008` | Symmetric decryption |
+
+<Note>
+Not every operation is available on every card. The card driver advertises its capabilities through `sc_supported_algo_info` structures attached to the `sc_card` object.
+</Note>
+
+## Event model
+
+`libopensc` provides `sc_wait_for_event()` for monitoring reader and card state changes. Applications that need to react to card insertion or removal use the event constants defined in `opensc.h`:
+
+```c
+SC_EVENT_CARD_INSERTED   // 0x0001
+SC_EVENT_CARD_REMOVED    // 0x0002
+SC_EVENT_READER_ATTACHED // 0x0004
+SC_EVENT_READER_DETACHED // 0x0008
+```
+
+## Configuration
+
+OpenSC's runtime behaviour is controlled by `opensc.conf` (typically at `/etc/opensc.conf` on Linux, `/Library/OpenSC/etc/opensc.conf` on macOS, or `%PROGRAMFILES%\OpenSC Project\OpenSC\opensc.conf` on Windows). It controls which reader backends are loaded, debug verbosity, card driver ordering, and PIN caching policy.
+
+<Tip>
+Run `opensc-tool --info` to print the active configuration file path and the OpenSC version in use.
+</Tip>

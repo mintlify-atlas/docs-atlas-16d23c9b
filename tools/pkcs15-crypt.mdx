@@ -1,0 +1,166 @@
+---
+title: "pkcs15-crypt: sign and decrypt using card keys"
+description: "Use pkcs15-crypt to compute digital signatures and decrypt data from the command line using private keys stored on PKCS#15-compliant smart cards."
+---
+
+`pkcs15-crypt` is a command-line utility for performing cryptographic operations using private keys stored on a PKCS#15-compliant smart card. You can compute digital signatures and decrypt data without the private key ever leaving the card. Input and output default to stdin and stdout, making it easy to integrate into shell pipelines.
+
+## Signing data
+
+Sign a file using the private key with the given ID. The input is assumed to be an MD5 hash by default:
+
+```bash
+pkcs15-crypt --sign --key 01 --input data.hash --output sig.bin
+```
+
+Specify that the input is a SHA-256 hash:
+
+```bash
+pkcs15-crypt --sign --key 01 --sha-256 \
+  --input data.sha256 --output sig.bin
+```
+
+Apply PKCS#1 v1.5 padding automatically (rather than supplying pre-padded input):
+
+```bash
+pkcs15-crypt --sign --key 01 --pkcs1 \
+  --input data.txt --output sig.bin
+```
+
+<Note>
+By default, `pkcs15-crypt` expects the input to already be padded to the correct length for the key. For a 1024-bit RSA key the input must be exactly 128 bytes. Use `--pkcs1` to have the tool apply PKCS#1 v1.5 padding for you.
+</Note>
+
+Sign and write the raw binary signature directly to stdout:
+
+```bash
+pkcs15-crypt --sign --key 01 --pkcs1 --raw \
+  --input data.txt > sig.bin
+```
+
+## Decrypting data
+
+Decrypt a file encrypted with the corresponding public key:
+
+```bash
+pkcs15-crypt --decipher --key 01 \
+  --input encrypted.bin --output plain.txt
+```
+
+If `--output` is omitted, the decrypted data is printed to stdout. Non-printable characters are shown as `xNN` hex notation unless you add `--raw`:
+
+```bash
+pkcs15-crypt --decipher --key 01 --raw \
+  --input encrypted.bin > plain.txt
+```
+
+## ECDSA signature format
+
+When signing with an ECDSA key, the output format defaults to `rs` (two concatenated raw integers, as used in PKCS#11). To produce a DER-encoded sequence compatible with OpenSSL:
+
+```bash
+pkcs15-crypt --sign --key 02 --pkcs1 \
+  --signature-format openssl \
+  --input data.hash --output sig.der
+```
+
+Valid `--signature-format` values:
+
+| Value | Description |
+|-------|-------------|
+| `rs` | Two concatenated integers (default, PKCS#11 format). |
+| `sequence` | DER-encoded sequence of two integers. |
+| `openssl` | Same as `sequence`; accepted as an alias. |
+
+## PIN entry
+
+By default, `pkcs15-crypt` prompts for the PIN on the terminal when the key requires authentication. You can supply it on the command line:
+
+```bash
+pkcs15-crypt --sign --key 01 --pin 123456 \
+  --input data.hash --output sig.bin
+```
+
+Read the PIN from stdin by passing `-` as the value:
+
+```bash
+echo -n "123456" | pkcs15-crypt --sign --key 01 --pin - \
+  --input data.hash --output sig.bin
+```
+
+<Warning>
+Passing PINs on the command line is a security risk — other users can read process arguments with `ps`. Use interactive prompting or read the PIN from a file descriptor when security matters.
+</Warning>
+
+## Options reference
+
+### Cryptographic operations
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--sign` | `-s` | Compute a digital signature on the input data. |
+| `--decipher` | `-c` | Decrypt the input data. |
+
+### Key selection
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--key` *id* | `-k` | ID of the private key to use for the operation. |
+
+### Input and output
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--input` *file* | `-i` | Input file. Defaults to stdin. |
+| `--output` *file* | `-o` | Output file. Defaults to stdout. Non-printable characters in stdout output are shown as `xNN` unless `--raw` is set. |
+| `--raw` | `-R` | Output raw 8-bit binary data to stdout. |
+
+### Hash algorithm selection
+
+These flags tell `pkcs15-crypt` what hash algorithm was applied to produce the input data. The default is MD5.
+
+| Option | Description |
+|--------|-------------|
+| `--md5` | Input is an MD5 hash (default). |
+| `--sha-1` | Input is a SHA-1 hash. |
+| `--sha-224` | Input is a SHA-224 hash. |
+| `--sha-256` | Input is a SHA-256 hash. |
+| `--sha-384` | Input is a SHA-384 hash. |
+| `--sha-512` | Input is a SHA-512 hash. |
+
+<Note>
+All input data must be in binary representation, not ASCII or hex. Use `openssl dgst -binary` or similar to produce a suitable hash file.
+</Note>
+
+### Padding and format
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--pkcs1` | | Apply PKCS#1 v1.5 padding to the input before signing or decrypting. Without this flag, the input must already be correctly padded. |
+| `--signature-format` | `--f` | ECDSA output format: `rs` (default), `sequence`, or `openssl`. |
+
+### Authentication
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--pin` *pin* | `-p` | PIN for the key. Pass `-` to read from stdin. |
+
+### Card and reader selection
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--reader` *arg* | `-r` | Reader number to use. Defaults to the first reader with a card present. Pass an ATR to select by card type. |
+| `--aid` *aid* | | Hex AID of the on-card PKCS#15 application to bind to. |
+| `--wait` | `-w` | Wait for a card insertion before proceeding. |
+
+### General
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--verbose` | `-v` | Increase verbosity. Repeat to enable library-level debug output. |
+| `--version` | | Print the OpenSC package version. |
+
+## See also
+
+- [pkcs15-tool](/tools/pkcs15-tool) — List keys and certificates on a card to find the key ID to use.
+- [pkcs15-init](/tools/pkcs15-init) — Personalize a card and load private keys before using `pkcs15-crypt`.

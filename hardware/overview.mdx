@@ -1,0 +1,142 @@
+---
+title: "OpenSC supported smart cards and security tokens"
+description: "OpenSC supports 40+ smart card types, HSMs, and national eID cards across Linux, macOS, and Windows through a unified PKCS#11 and PKCS#15 interface."
+---
+
+OpenSC supports a broad range of smart cards, USB tokens, and hardware security modules through a driver architecture that maps each card type to a dedicated driver. When you insert a card, OpenSC reads its Answer To Reset (ATR) bytes to identify the card type and loads the matching driver automatically. Over 40 card families are supported across Linux, macOS, and Windows.
+
+## Checking support for your card
+
+To list all drivers compiled into your OpenSC installation:
+
+```bash
+opensc-tool --list-drivers
+```
+
+To see which card (if any) OpenSC detects in your reader:
+
+```bash
+opensc-tool --info
+opensc-tool --atr
+```
+
+If OpenSC does not recognize your card, it will fall back to a generic driver. Some cards that implement PKCS#15 natively are handled through the PKCS#15 emulation layer even if no dedicated driver exists.
+
+## Card detection via ATR
+
+The ATR is a byte string the card sends on power-up that encodes the card's protocol and, for many cards, its product identity. OpenSC matches ATRs against a built-in table. You can view the ATR of the inserted card with:
+
+```bash
+opensc-tool --atr
+```
+
+The mapping from ATR to driver is defined in each card driver's source file. If your card has an ATR that is not yet in the table, you may still be able to use it by specifying the driver explicitly in `opensc.conf`.
+
+## PKI and generic cards
+
+These cards are general-purpose PKI tokens suitable for digital signatures, authentication, and encryption.
+
+<CardGroup cols={2}>
+  <Card title="CardOS" icon="credit-card">
+    Siemens/Atos CardOS M4.01, M4.2, M4.3, M4.4, V5.0, V5.3. Also used as the base for Italian CIE v1 eID cards.
+  </Card>
+  <Card title="STARCOS" icon="credit-card">
+    Giesecke+Devrient STARCOS 3.4 and 3.5, including eSign variants. Commonly used in German qualified signature cards.
+  </Card>
+  <Card title="TCOS" icon="credit-card">
+    TCOS v2 and v3 cards, used in German health cards (eGK) and related products.
+  </Card>
+  <Card title="Oberthur / AuthentIC" icon="credit-card">
+    Oberthur 32K, 64K, and AuthentIC v3.2 (COSMO v7) cards via the `oberthur` and `authentic` drivers.
+  </Card>
+  <Card title="SetCOS" icon="credit-card">
+    SetCOS 4.4, EID v2.0, and EID v2.1 cards via the `setcos` driver.
+  </Card>
+  <Card title="MyEID" icon="credit-card">
+    Aventra MyEID and OSEID cards. Supports RSA and ECC key generation on-card.
+  </Card>
+  <Card title="MuscleApplet" icon="credit-card">
+    JavaCards running the MuscleApplet (v1 and v2), including Aladdin eToken 72K and JCOP-based tokens.
+  </Card>
+  <Card title="Rutoken" icon="credit-card">
+    Aktiv Rutoken ECP, Rutoken ECP SC, and Rutoken Lite USB tokens with GOST cryptography support.
+  </Card>
+  <Card title="IsoApplet" icon="credit-card">
+    JavaCards running the open-source IsoApplet, which implements ISO 7816 with RSA and ECC support.
+  </Card>
+  <Card title="IDPrime" icon="credit-card">
+    Thales/Gemalto IDPrime 830, 840, 930, 940, 3810, and variants, via the `idprime` driver.
+  </Card>
+  <Card title="GIDS" icon="credit-card">
+    Generic Identity Device Specification v1 and v2 cards; Microsoft's standard for PIV-compatible tokens on Windows.
+  </Card>
+  <Card title="D-Trust" icon="credit-card">
+    D-Trust signature cards v4.1 and v5.x (Std, Multi, M100 variants), used for German qualified electronic signatures.
+  </Card>
+</CardGroup>
+
+## OpenPGP cards
+
+<CardGroup cols={2}>
+  <Card title="OpenPGP card v1 / v2 / v3" icon="key">
+    The standard OpenPGP smart card specification, supported via the `openpgp` driver. Versions 1, 2, and 3 are all recognized. Use `openpgp-tool` for OpenPGP-specific operations.
+  </Card>
+  <Card title="GnuK" icon="key">
+    The Nitrokey/FST-01 GnuK token, an open-hardware OpenPGP implementation. Detected as `SC_CARD_TYPE_OPENPGP_GNUK`.
+  </Card>
+</CardGroup>
+
+## US Government cards
+
+<CardGroup cols={2}>
+  <Card title="PIV (FIPS 201)" icon="shield">
+    Personal Identity Verification cards used across US Federal agencies. Supported via the `piv` driver. Includes YubiKey 4, Gemalto, Oberthur, GI-DE, PivKey, and Swissbit PIV variants. Use `piv-tool` for PIV-specific operations.
+  </Card>
+  <Card title="CAC" icon="shield">
+    US Department of Defense Common Access Card (CAC I and CAC II). Supported via the `cac` and `cac1` drivers.
+  </Card>
+  <Card title="Coolkey" icon="shield">
+    Red Hat / DoD Coolkey applet on JavaCards, used historically in US Government PKI deployments.
+  </Card>
+</CardGroup>
+
+## European eID cards
+
+European national identity cards are covered in detail in [National eID cards](/hardware/national-eid). A brief overview:
+
+| Card | Driver | Country |
+|---|---|---|
+| Belgian eID (Belpic) | `belpic` | Belgium |
+| German nPA | `npa` | Germany |
+| Estonian eID 2018 / 2025 | `esteid2018`, `esteid2025` | Estonia |
+| Portuguese eID | `gemsafeV1` (`pteid` variant) | Portugal |
+| Italian CIE v1 / v2 | `cardos`, `itacns` | Italy |
+| Italian CNS | `itacns` | Italy |
+| Slovak eID | `skeid` | Slovakia |
+| Lithuanian eID | `lteid` | Lithuania |
+| Serbian eID | `srbeid` | Serbia |
+| Spanish DNIe | `dnie` | Spain |
+| Finnish EID 2022 / 2025 | `esteid2018` variant | Finland |
+
+## Hardware security modules
+
+<CardGroup cols={1}>
+  <Card title="SmartCard-HSM" icon="server">
+    The SmartCard-HSM is an open-design HSM available as a USB token and embedded module. It supports RSA up to 4096 bits, ECC (P-192 to P-521, Brainpool), AES, and 3DES. Managed with `sc-hsm-tool`. Supported variants include the standard HSM, the SoC variant, and the GOID variant used in German government applications.
+  </Card>
+</CardGroup>
+
+## Other supported cards
+
+| Card | Driver | Notes |
+|---|---|---|
+| JPKI | `jpki` | Japanese Public Key Infrastructure card used for resident registration |
+| eDO | `edo` | Electronic identity document (eDO) cards |
+| NQ-Applet / JCOP4 | `nqApplet` | JCOP4 cards running the NQ-Applet |
+| eOI | `eoi` | eOI contactless cards |
+| IAS/ECC | `iasecc` | IAS-ECC standard cards (Gemalto, Oberthur, Sagem, AMOS, MI variants) |
+| EnterSafe | `entersafe` | Feitian EnterSafe and ePass2003 tokens |
+| Cryptoflex / Cyberflex | `flex`, `cyberflex` | Legacy Schlumberger/Axalto cards |
+| MaskTech | `masktech` | MaskTech MTCOS-based cards |
+| ASEPCOS | `asepcos` | Athena APCOS Java cards |
+| AtTrust ACOS | `atrust_acos` | Austrian Trust ACOS cards |

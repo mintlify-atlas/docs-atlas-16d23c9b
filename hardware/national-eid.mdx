@@ -1,0 +1,188 @@
+---
+title: "National eID cards supported by OpenSC middleware"
+description: "Use OpenSC with European and other national electronic identity cards for authentication, digital signing, and certificate management."
+---
+
+OpenSC supports a range of national electronic identity cards issued by governments across Europe and beyond. Each eID card typically contains one or more X.509 certificates and the corresponding private keys for authentication and qualified electronic signatures. This page describes the supported cards, the relevant OpenSC drivers, and any dedicated tools available for card-specific operations.
+
+## Estonian eID
+
+Estonia's eID card is one of the most widely used national identity cards in Europe and has been fully supported in OpenSC since its early generations.
+
+**Drivers:** `esteid2018`, `esteid2025`  
+**Card types:** `SC_CARD_TYPE_ESTEID_2018`, `SC_CARD_TYPE_ESTEID_2025`
+
+The `esteid2018` driver covers the 2018-generation card and derivatives including the 2022 Finnish EID (`SC_CARD_TYPE_FINEID_2022`) and Estonian/Latvian 2025 variants. The newer `esteid2025` driver covers the 2025-generation Estonian card.
+
+Estonian eID cards hold an authentication certificate and a digital signing certificate. List them with:
+
+```bash
+pkcs15-tool --list-certificates
+```
+
+Authenticate via PKCS#11 (for example, in Firefox or Chrome) by pointing the browser at the OpenSC PKCS#11 module (`opensc-pkcs11.so`).
+
+<Note>
+The Lithuanian eID card (`SC_CARD_TYPE_LATEID_2018`, `SC_CARD_TYPE_LATEID_2018_V2_2025`) uses the same `esteid2018` driver family. See the [Lithuanian eID](#lithuanian-eid-lteid) section below.
+</Note>
+
+## German nPA
+
+The German national identity card (Personalausweis, nPA) uses the PACE (Password Authenticated Connection Establishment) protocol for secure channel establishment before any sensitive operation.
+
+**Driver:** `npa`  
+**Card types:** `SC_CARD_TYPE_NPA`, `SC_CARD_TYPE_NPA_TEST`, `SC_CARD_TYPE_NPA_ONLINE`  
+**Dedicated tool:** `npa-tool`
+
+`npa-tool` handles the PACE handshake and provides access to the card's electronic identity function (eID) and qualified electronic signature (QES) capabilities.
+
+```bash
+# Establish a PACE channel and list objects
+npa-tool --pin
+
+# Read the card's document identifier
+npa-tool --read-ef-cardaccess
+```
+
+<Note>
+The German eGK (elektronische Gesundheitskarte, health insurance card) is based on TCOS and is handled separately by `egk-tool`. It is not a national identity card but shares some driver infrastructure with the nPA.
+</Note>
+
+## Belgian eID (Belpic)
+
+The Belgian eID (Belpic card) provides authentication and non-repudiation certificates and is managed by the `belpic` driver.
+
+**Driver:** `belpic`  
+**Card types:** `SC_CARD_TYPE_BELPIC_GENERIC`, `SC_CARD_TYPE_BELPIC_EID`
+
+Belgian eID cards contain:
+
+- An authentication certificate (used for TLS client authentication)
+- A non-repudiation certificate (used for qualified signatures)
+- The holder's identity data (name, address, photo — not accessible via OpenSC)
+
+```bash
+# List certificates on the Belgian eID
+pkcs15-tool --list-certificates
+
+# Read the authentication certificate
+pkcs15-tool --read-certificate 01 > belpic-auth.pem
+```
+
+## Portuguese eID (pteid)
+
+Portugal's Cartão de Cidadão uses the GemsafeV1 driver with the `pteid` card type.
+
+**Driver:** `gemsafeV1`  
+**Card type:** `SC_CARD_TYPE_GEMSAFEV1_PTEID`
+
+```bash
+pkcs15-tool --list-certificates
+pkcs15-tool --read-certificate 01 > pteid-auth.pem
+```
+
+The card includes authentication and signature certificates. Use the OpenSC PKCS#11 module to access the card from applications.
+
+## Italian CIE (Carta d'Identità Elettronica)
+
+Italy has issued multiple generations of its electronic identity card (CIE). OpenSC supports:
+
+| Generation | Driver | Card type |
+|---|---|---|
+| CIE v1 | `cardos` | `SC_CARD_TYPE_CARDOS_CIE_V1` |
+| CIE v2 | `itacns` | `SC_CARD_TYPE_ITACNS_CIE_V2` |
+| CNS (Carta Nazionale dei Servizi) | `itacns` | `SC_CARD_TYPE_ITACNS_CNS` |
+| CNS (Idemia 2021) | `itacns` | `SC_CARD_TYPE_ITACNS_CNS_IDEMIA_2021` |
+
+```bash
+pkcs15-tool --list-certificates
+pkcs15-tool --read-certificate 01 > cie-auth.pem
+```
+
+## Slovak eID (SKEID)
+
+The Slovak national identity card is supported via the dedicated `skeid` driver.
+
+**Driver:** `skeid`  
+**Card type:** `SC_CARD_TYPE_SKEID_V3`
+
+```bash
+pkcs15-tool --list-certificates
+pkcs15-tool --read-certificate 01 > skeid-auth.pem
+```
+
+The card follows standard PKCS#15 structures, making it accessible from any application that supports the OpenSC PKCS#11 module.
+
+## Lithuanian eID (LTEID)
+
+Lithuanian eID cards are handled by the `lteid` driver. Older Lithuanian cards based on the Estonian 2018 platform use the `esteid2018` driver.
+
+**Driver:** `lteid`  
+**Card type:** `SC_CARD_TYPE_LTEID`  
+**Also:** `esteid2018` driver for `SC_CARD_TYPE_LATEID_2018` and `SC_CARD_TYPE_LATEID_2018_V2_2025`
+
+```bash
+pkcs15-tool --list-certificates
+pkcs15-tool --list-pins
+```
+
+## Serbian eID (SRBEID)
+
+Serbian electronic identity documents use the `srbeid` driver, which supports cards based on the CardEdge PKI applet.
+
+**Driver:** `srbeid`  
+**Card type:** `SC_CARD_TYPE_SRBEID_BASE`
+
+```bash
+pkcs15-tool --list-certificates
+pkcs15-tool --read-certificate 01 > srbeid-auth.pem
+```
+
+## German eGK (health card)
+
+The German electronic health card (eGK, Gesundheitskarte) is based on TCOS and is distinct from the nPA identity card.
+
+**Dedicated tool:** `egk-tool`  
+**Driver:** `tcos` (TCOS v2/v3)
+
+`egk-tool` provides access to health-card-specific functionality:
+
+```bash
+# Read the card's insurance data
+egk-tool --read-pd
+
+# Read the protected insurance data (requires PACE with PIN)
+egk-tool --read-vd --pin
+```
+
+<Note>
+`egk-tool` is a standalone companion tool not bundled in all OpenSC distributions. Check your package manager or build from source.
+</Note>
+
+## Japanese JPKI card
+
+Japan's Public Key Infrastructure card (Jūminhyō, resident registration card with embedded PKI) is supported via the `jpki` driver.
+
+**Driver:** `jpki`  
+**Card type:** `SC_CARD_TYPE_JPKI_BASE`
+
+Japanese JPKI cards contain authentication and digital signature certificates tied to the holder's My Number (social security number). Standard PKCS#11 and PKCS#15 tools apply:
+
+```bash
+pkcs15-tool --list-certificates
+pkcs15-tool --read-certificate 01 > jpki-auth.pem
+```
+
+## Using eID cards with applications
+
+All supported national eID cards are accessible to PKCS#11-aware applications through the OpenSC PKCS#11 module. Point your application at:
+
+- **Linux/macOS:** `/usr/lib/opensc-pkcs11.so` (path varies by distribution)
+- **Windows:** `opensc-pkcs11.dll`
+
+To verify the card is visible as a PKCS#11 token:
+
+```bash
+pkcs11-tool --list-slots
+pkcs11-tool --list-objects --type cert
+```

@@ -1,0 +1,97 @@
+---
+title: "gids-tool: initialize and manage GIDS smart cards"
+description: "Use gids-tool to initialize GIDS (Generic Identity Device Specification) smart cards, manage the admin key, and unblock user PINs."
+---
+
+`gids-tool` performs administrative operations on GIDS (Generic Identity Device Specification) smart cards. GIDS is an open smart card specification used in Microsoft environments — it is supported natively by Windows without additional drivers and integrates with the Windows Smart Card Mini-Driver framework. The tool handles card initialization, admin key management, PIN unblocking, and serial number assignment.
+
+<Note>
+  After initializing a GIDS card with `gids-tool`, use standard OpenSC tools (`pkcs15-init`, `pkcs11-tool`, `pkcs15-tool`) and the Windows MiniDriver to manage keys and certificates on the card.
+</Note>
+
+## Initializing a GIDS card
+
+Before a GIDS card can be used, it must be initialized with an administrator key, a user PIN, and a serial number. Initialization creates the GIDS application structure on the card.
+
+```bash
+gids-tool --initialize \
+  --admin-key 00000000000000000000000000000000000000000000000000 \
+  --pin 123456 \
+  --serial-number 00000000000000000000000000000000
+```
+
+<Warning>
+  Initialization is destructive on cards that already contain a GIDS application. The admin key, PIN, and serial number must be set at this stage — they cannot be omitted. Store the admin key securely; it is required for future administrative operations.
+</Warning>
+
+The default admin key used in examples is 48 hex characters (24 bytes for a 3DES key). Replace `00000000...` with your actual admin key value.
+
+## Unblocking the user PIN
+
+If the user enters the wrong PIN too many times, the PIN becomes blocked. The administrator key is required to unblock it:
+
+```bash
+gids-tool --unblock \
+  --admin-key <your-admin-key-hex> \
+  --pin <new-pin>
+```
+
+This resets the PIN retry counter and sets the PIN to the new value.
+
+## Changing the admin key
+
+To rotate the administrator key on an initialized card:
+
+```bash
+gids-tool --change-admin-key \
+  --admin-key <current-admin-key-hex> \
+  --new-admin-key <new-admin-key-hex>
+```
+
+## Supplying the PIN securely
+
+Instead of passing the PIN on the command line (where it is visible to other processes), use an environment variable:
+
+```bash
+export MYPIN=123456
+gids-tool --initialize \
+  --admin-key 00000000000000000000000000000000000000000000000000 \
+  --pin env:MYPIN \
+  --serial-number 00000000000000000000000000000000
+```
+
+<Warning>
+  Passing sensitive values such as PINs and admin keys on the command line exposes them to other users via `ps`. Use environment variables or interactive prompting when security matters.
+</Warning>
+
+## Selecting a reader
+
+```bash
+# Use reader at index 1
+gids-tool --initialize ... --reader 1
+
+# Wait for a card to be inserted before proceeding
+gids-tool --initialize ... --wait
+```
+
+## Options reference
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--initialize` | `-X` | Initialize the GIDS token |
+| `--admin-key` _hex_ | | Administrator key (48 hex characters for 3DES) |
+| `--pin` _pin_ | | User PIN value; use `env:VARIABLE` to read from environment |
+| `--serial-number` _hex_ | | Card serial number (32 hex characters) |
+| `--unblock` | `-U` | Unblock the user PIN using the admin key |
+| `--change-admin-key` | `-C` | Change the administrator key |
+| `--new-admin-key` _hex_ | | New administrator key for `--change-admin-key` |
+| `--reader` _arg_ | `-r` | Reader number or ATR |
+| `--wait` | `-w` | Wait for a card to be inserted |
+| `--verbose` | `-v` | Increase verbosity; repeat for debug output |
+
+## See also
+
+- [`pkcs15-init`](/tools/pkcs15-init) — Load keys and certificates onto the initialized GIDS card
+- [`pkcs11-tool`](/tools/pkcs11-tool) — PKCS#11 operations including key generation and signing
+- [`pkcs15-tool`](/tools/pkcs15-tool) — List certificates and keys from the GIDS card
+- [`opensc-tool`](/tools/opensc-tool) — Inspect card ATR and list drivers

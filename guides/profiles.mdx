@@ -1,0 +1,200 @@
+---
+title: "PKCS#15 profiles for smart card initialization"
+description: "OpenSC initialization profiles are configuration files that define a card's file structure and security policies during PKCS#15 personalization."
+---
+
+When `pkcs15-init` personalizes a smart card, it does not hard-code the card's file layout or PIN policy. Instead, it reads _profile files_ that describe the structure to create, the access conditions to enforce, and the PIN requirements to apply. This separation lets you reuse the same toolchain across different card models by simply changing the profile.
+
+`pkcs15-init` loads two profiles at startup:
+
+1. **Generic application profile** — describes the PKCS#15 application structure (ODF, CDF, PrKDF, etc.). Specified with `-p` or `--profile`. The default is `pkcs15`.
+2. **Card-specific profile** — selected automatically based on the detected card type. Contains card-level information such as PIN file locations and key references. Overridden with `-c` or `--card-profile`.
+
+## Profile file locations
+
+Profiles are installed alongside the OpenSC data files, typically at:
+
+```
+/usr/share/opensc/*.profile
+```
+
+The exact path depends on your build configuration (`--pkgdatadir`). On macOS with Homebrew the path is usually `/opt/homebrew/share/opensc/`.
+
+## Available profiles
+
+The following profiles ship with OpenSC:
+
+| Profile file | Description |
+|---|---|
+| `pkcs15.profile` | Generic PKCS#15 application profile; loaded by default |
+| `cardos.profile` | Siemens/Atos CardOS M4 and V5 |
+| `starcos.profile` | STARCOS 3.x (Giesecke+Devrient) |
+| `openpgp.profile` | OpenPGP card v1/v2/v3 and GnuK |
+| `sc-hsm.profile` | SmartCard-HSM hardware security module |
+| `myeid.profile` | MyEID (Aventra) cards |
+| `muscle.profile` | MuscleApplet-based JavaCards |
+| `oberthur.profile` | Oberthur AuthentIC cards |
+| `setcos.profile` | SetCOS PKI cards |
+| `rutoken.profile` | Rutoken ECP tokens |
+| `rutoken_ecp.profile` | Rutoken ECP variant |
+| `rutoken_lite.profile` | Rutoken Lite variant |
+| `isoApplet.profile` | IsoApplet on JavaCard |
+| `gids.profile` | Generic Identity Device Specification (GIDS) |
+| `iasecc.profile` | IAS/ECC cards (IAS-ECC standard) |
+| `epass2003.profile` | Feitian ePass2003 tokens |
+| `entersafe.profile` | EnterSafe cards |
+| `asepcos.profile` | Athena APCOS cards |
+| `authentic.profile` | Oberthur AuthentIC v3.2 |
+| `flex.profile` | Cryptoflex/Cyberflex |
+
+## Profile syntax
+
+Profile files use a block-based syntax similar to OpenSC's `opensc.conf`. Each block has a keyword, optional name, and a body enclosed in `{ }`.
+
+```
+key [, name] {
+    key = value;
+    # comment
+    nested-block { ... }
+}
+```
+
+### Top-level blocks
+
+| Block | Purpose |
+|---|---|
+| `cardinfo` | General card metadata (label, PIN length limits, encoding) |
+| `pkcs15` | PKCS#15 application settings (ID style, certificate placement) |
+| `option` | Named option sets that modify profile behavior |
+| `PIN` | Policy for a specific PIN type |
+| `filesystem` | Hierarchy of DF and EF file definitions |
+| `macros` | Named constants referenced in other blocks |
+
+### `cardinfo` block
+
+Controls card-level defaults:
+
+```
+cardinfo {
+    label           = "OpenSC Card";
+    manufacturer    = "OpenSC Project";
+    min-pin-length  = 4;
+    max-pin-length  = 8;
+    pin-encoding    = ascii-numeric;  # BCD | ascii-numeric | utf8
+    pin-pad-char    = 0x00;
+    pin-domains     = no;
+}
+```
+
+### `pkcs15` block
+
+Controls how the PKCS#15 structure is built:
+
+```
+pkcs15 {
+    direct-certificates = no;   # embed certs directly in CDF
+    encode-df-length    = no;   # store DF length in ODF
+    do-last-update      = yes;  # write lastUpdate to EF(TokenInfo)
+    pkcs15-id-style     = mozilla; # native | mozilla | rfc2459
+}
+```
+
+The `pkcs15-id-style` setting determines how object IDs are calculated when you do not specify `--id` explicitly:
+
+| Style | Algorithm |
+|---|---|
+| `native` | `'E'` + count of existing objects of same type |
+| `mozilla` | SHA1 of the RSA modulus |
+| `rfc2459` | SHA1 of the ASN.1 sequence of public key components |
+
+### `option` block
+
+Options modify profile behavior and are appended to the profile name with `+`:
+
+```
+option onepin {
+    macros {
+        protected   = *=$PIN, READ=NONE;
+        unprotected = *=NONE;
+    }
+}
+```
+
+Built-in options for `pkcs15.profile`:
+
+| Option | Usage | Description |
+|---|---|---|
+| `default` | `pkcs15` or `pkcs15+default` | Standard SO PIN + user PIN setup |
+| `onepin` | `pkcs15+onepin` | Single PIN controls all operations |
+| `small` | `pkcs15+small` | Reduced file sizes for memory-constrained cards |
+
+### `PIN` block
+
+Controls policy for each PIN type:
+
+```
+PIN user-pin {
+    attempts       = 3;
+    min-length     = 4;
+    max-length     = 8;
+    encoding       = ascii-numeric;
+    flags          = local, initialized, needs-padding;
+}
+```
+
+PIN types: `pin` / `user-pin`, `puk` / `user-puk`, `sopin` / `so-pin`, `sopuk` / `so-puk`.
+
+PIN flags: `case-sensitive`, `local`, `change-disabled`, `unblock-disabled`, `initialized`, `needs-padding`, `unblockingPin`, `soPin`, `disable-allowed`, `integrity-protected`, `confidentiality-protected`, `exchangeRefData`.
+
+## Specifying a profile
+
+```bash
+# Default profile
+pkcs15-init --create-pkcs15
+
+# Card-specific profile (loaded automatically, but can be forced)
+pkcs15-init --create-pkcs15 --card-profile cardos
+
+# Generic profile with option
+pkcs15-init --create-pkcs15 -p pkcs15+onepin
+
+# Custom profile file (full path or name without .profile suffix)
+pkcs15-init --create-pkcs15 -p /path/to/custom
+```
+
+## Customizing profiles for specific security policies
+
+To enforce a stricter PIN policy, copy the relevant profile from `/usr/share/opensc/` and edit it:
+
+```bash
+cp /usr/share/opensc/pkcs15.profile ~/my-policy.profile
+```
+
+Then adjust the `PIN` blocks — for example, requiring a minimum PIN length of 6 and allowing only 2 attempts before lockout:
+
+```
+PIN user-pin {
+    attempts   = 2;
+    min-length = 6;
+    max-length = 12;
+    encoding   = ascii-numeric;
+}
+```
+
+Use the custom profile during initialization:
+
+```bash
+pkcs15-init --create-pkcs15 -p ~/my-policy
+```
+
+<Note>
+Card-specific profiles are merged with the generic application profile at runtime. Settings in the card-specific profile override or extend those in the generic profile. You do not need to duplicate unchanged sections.
+</Note>
+
+## Further reference
+
+The `pkcs15-profile(5)` man page provides the complete reference for all profile syntax, block types, and allowed values:
+
+```bash
+man 5 pkcs15-profile
+```

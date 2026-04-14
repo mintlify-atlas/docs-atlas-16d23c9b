@@ -1,0 +1,147 @@
+---
+title: "opensc-tool: command-line generic smart card utility"
+description: "Use opensc-tool to read a card's ATR, send raw APDU commands, list connected readers and drivers, and run low-level smart card diagnostics."
+---
+
+`opensc-tool` is the primary low-level utility in OpenSC for interacting with a smart card directly from the command line. It lets you read the card's Answer To Reset (ATR), send arbitrary APDU commands, inspect available readers and card drivers, retrieve the card serial number, and query OpenSC library information — all without requiring a higher-level protocol like PKCS#11 or PKCS#15.
+
+## Common use cases
+
+- **Verify a reader is working** — list connected readers before running other tools
+- **Identify an unknown card** — read the ATR and look up the card type
+- **Send raw APDUs** — test card behavior or debug card communication
+- **Inspect OpenSC itself** — confirm build flags and enabled drivers
+
+## Synopsis
+
+```bash
+opensc-tool [OPTIONS]
+```
+
+## Options
+
+| Option | Short | Description |
+|---|---|---|
+| `--version` | | Print the OpenSC package release version. |
+| `--info` | `-i` | Print information about OpenSC, such as version and enabled components. |
+| `--atr` | `-a` | Print the Answer To Reset (ATR) of the card. Output is in hex byte format. |
+| `--serial` | | Print the card serial number (normally the ICCSN). Output is in hex byte format. |
+| `--name` | `-n` | Print the name of the inserted card (driver). |
+| `--list-readers` | `-l` | List all configured readers. |
+| `--list-drivers` | `-D` | List all installed card drivers. |
+| `--list-files` | `-f` | Recursively list all files stored on the card. |
+| `--list-algorithms` | | List algorithms supported by the card. |
+| `--reader <arg>` | `-r <arg>` | Number of the reader to use. By default, the first reader with a present card is used. If `arg` is an ATR, the reader with a matching card will be chosen. |
+| `--card-driver <driver>` | `-c <driver>` | Use the given card driver. The default is to auto-detect. Pass `?` to list all available drivers. |
+| `--send-apdu <apdu>` | `-s <apdu>` | Send an arbitrary APDU to the card in the format `AA:BB:CC:DD:EE:FF...`. Repeat the option to send multiple APDUs. |
+| `--reset [type]` | | Reset the card in the reader. The default reset type is `cold`; `warm` is also accepted. |
+| `--get-conf-entry <conf>` | `-G <conf>` | Get a configuration key. Format: `section:name:key`. |
+| `--set-conf-entry <conf>` | `-S <conf>` | Set a configuration key. Format: `section:name:key:value`. |
+| `--wait` | `-w` | Wait for a card to be inserted. |
+| `--verbose` | `-v` | Increase verbosity. Repeat the flag multiple times to enable debug output in the OpenSC library. |
+
+## Examples
+
+### List connected readers
+
+```bash
+opensc-tool --list-readers
+```
+
+```
+# Slot 0 - ACS ACR122U 00 00
+# Slot 1 - Yubico YubiKey OTP+FIDO+CCID 01 00
+```
+
+### Read the card ATR
+
+```bash
+opensc-tool --atr
+```
+
+```
+3b:9f:96:80:1f:c3:80:31:a0:73:be:21:13:67:43:20:07:18:00:00:01:d5
+```
+
+### Print the card name and serial number
+
+```bash
+opensc-tool --name --serial
+```
+
+```
+Using reader with a card: Yubico YubiKey OTP+FIDO+CCID 01 00
+PIV-II card
+25:97:56:27
+```
+
+### List all installed card drivers
+
+```bash
+opensc-tool --list-drivers
+```
+
+```
+PIV-II   PIV-II card
+OpenPGP  OpenPGP card
+CAC      CAC card
+...
+```
+
+### Send a raw APDU
+
+The APDU bytes are colon-separated hex values. The example below sends a SELECT command for the Master File (MF):
+
+```bash
+opensc-tool --send-apdu 00:A4:00:00:02:3F:00
+```
+
+```
+Sending: 00 A4 00 00 02 3F 00
+Received (SW1=0x90, SW2=0x00)
+```
+
+<Note>
+Built-in card drivers may send additional APDUs during card detection and initialization. To suppress this behavior when sending raw APDUs, add `--card-driver default`:
+
+```bash
+opensc-tool --card-driver default --send-apdu 00:A4:00:00:02:3F:00
+```
+</Note>
+
+### Send multiple APDUs in sequence
+
+Repeat `--send-apdu` for each command:
+
+```bash
+opensc-tool \
+  --send-apdu 00:A4:00:00:02:3F:00 \
+  --send-apdu 00:A4:00:00:02:50:15
+```
+
+### Print OpenSC build information
+
+```bash
+opensc-tool --info
+```
+
+```
+OpenSC version: 0.25.0
+Enabled features: zlib readline
+```
+
+### Wait for a card and then read its ATR
+
+```bash
+opensc-tool --wait --atr
+```
+
+<Tip>
+Use `--verbose` (or `-v -v`) to see detailed APDU traces and library debug output when diagnosing card communication issues.
+</Tip>
+
+## See also
+
+- [`opensc-explorer`](/tools/opensc-explorer) — interactive file system browser for smart cards
+- [`pkcs15-tool`](/tools/pkcs15-tool) — read PKCS#15 objects from a card
+- [`pkcs11-tool`](/tools/pkcs11-tool) — manage keys and certificates via PKCS#11

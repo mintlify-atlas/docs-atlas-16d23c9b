@@ -1,28 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "OpenSC",
+  "projectType": "cli-tool",
+  "projectName": "OpenSC",
+  "projectDescription": "Open source smart card middleware and tools providing PKCS#11, PKCS#15, and Windows MiniDriver interfaces for cryptographic smart cards and security tokens.",
   "theme": "aspen",
-  "colors": {
-    "primary": "#848c8e",
-    "light": "#11161e",
-    "dark": "#cfd0d2"
-  },
-  "favicon": "https://media.brand.dev/2b01fe20-c04b-4a1d-a2f9-1d2789c50a7a.jpg",
-  "logo": {
-    "light": "https://media.brand.dev/5ffd6ce4-2434-4b4b-920a-f8cacac8b48b.svg",
-    "dark": "https://media.brand.dev/5ffd6ce4-2434-4b4b-920a-f8cacac8b48b.svg"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/OpenSC/OpenSC"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/OpenSC/OpenSC"
-    }
-  },
+  "primaryColor": "#848c8e",
+  "lightColor": "#11161e",
+  "darkColor": "#cfd0d2",
   "navigation": {
     "tabs": [
       {
@@ -97,10 +80,7 @@
               "tools/openpgp-tool",
               "tools/piv-tool",
               "tools/sc-hsm-tool",
-              "tools/cardos-tool",
-              "tools/gids-tool",
-              "tools/npa-tool",
-              "tools/egk-tool"
+              "tools/cardos-tool"
             ]
           },
           {
@@ -113,5 +93,35 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "PKCS#11 module for cryptographic token operations",
+    "PKCS#15 smart card data structure support",
+    "Windows MiniDriver (CNG/CSP) integration",
+    "Support for 40+ smart card types and national eID cards",
+    "Card initialization and personalization via pkcs15-init",
+    "Cross-platform: Linux, macOS, Windows",
+    "PC/SC and CT-API reader support",
+    "Secure messaging and PIN pad support",
+    "OpenPGP, PIV, CAC, and GIDS card support"
+  ],
+  "publicApiSurface": [
+    "opensc-tool",
+    "opensc-explorer",
+    "opensc-notify",
+    "pkcs11-tool",
+    "pkcs15-tool",
+    "pkcs15-init",
+    "pkcs15-crypt",
+    "openpgp-tool",
+    "piv-tool",
+    "sc-hsm-tool",
+    "cardos-tool",
+    "npa-tool",
+    "egk-tool",
+    "gids-tool",
+    "libopensc (C library)",
+    "opensc-pkcs11.so (PKCS#11 module)",
+    "opensc-minidriver.dll (Windows MiniDriver)"
+  ]
 }

@@ -1,0 +1,215 @@
+---
+title: "Configure OpenSC behavior with opensc.conf"
+description: "Learn about the opensc.conf configuration file, its location on each platform, and key settings for readers, card drivers, debugging, and PKCS#11."
+---
+
+`opensc.conf` is the central configuration file for OpenSC. It controls how OpenSC discovers smart card readers, selects card drivers, writes debug output, and exposes its PKCS#11 module to applications. On most systems the defaults work without any editing, but the configuration file lets you tune behaviour for unusual readers, proprietary cards, or enterprise deployments.
+
+## How OpenSC reads configuration
+
+OpenSC resolves settings from the following sources in order, with earlier sources taking precedence:
+
+1. Command-line options
+2. Environment variables
+3. Windows Registry key `HKEY_CURRENT_USER` (Windows only)
+4. Windows Registry key `HKEY_LOCAL_MACHINE` (Windows only)
+5. The system-wide `opensc.conf` file
+
+## File locations
+
+<Tabs>
+  <Tab title="Linux / macOS">
+    OpenSC looks for its configuration file at the path set during compilation (typically `/etc/opensc.conf`). A per-user override is also supported:
+
+    | Location | Scope |
+    |----------|-------|
+    | `/etc/opensc.conf` | System-wide |
+    | `~/.config/opensc/opensc.conf` | Current user |
+
+    If both files exist, settings in the user file take precedence over the system file.
+  </Tab>
+  <Tab title="Windows">
+    On Windows, OpenSC reads configuration from the Windows Registry before falling back to the file:
+
+    | Source | Scope |
+    |--------|-------|
+    | `HKEY_LOCAL_MACHINE\Software\OpenSC Project\OpenSC` | System-wide registry |
+    | `HKEY_CURRENT_USER\Software\OpenSC Project\OpenSC` | Per-user registry |
+    | `%PROGRAMFILES%\OpenSC Project\OpenSC\opensc.conf` | System-wide file |
+
+    The MSI installer writes default values to `HKEY_LOCAL_MACHINE` during setup.
+  </Tab>
+</Tabs>
+
+## File format
+
+`opensc.conf` uses a hierarchical block syntax parsed by OpenSC's built-in `scconf` library. Blocks look like:
+
+```text
+key [, name] {
+    key = value;
+    # comment
+    nested_block name {
+        key = value;
+    }
+}
+```
+
+At the root level, settings are grouped inside `app` blocks that target a specific application or the `default` fallback:
+
+```text
+app default {
+    # settings that apply to all OpenSC applications
+}
+
+app opensc-pkcs11 {
+    # settings that apply only to the PKCS#11 module
+}
+```
+
+Valid `app` names include `default`, `opensc-pkcs11`, `onepin-opensc-pkcs11`, `cardmod` (Windows MiniDriver), and the name of any OpenSC command-line tool (e.g. `pkcs11-tool`, `opensc-explorer`).
+
+## Key configuration settings
+
+### Debug output
+
+```text
+app default {
+    debug = 3;
+    debug_file = /tmp/opensc-debug.log;
+}
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `debug` | `0` | Verbosity level. Higher values produce more output. `0` disables debug logging. |
+| `debug_file` | `stderr` | File to write debug output to. Also accepts `stdout` or `stderr`. |
+
+The environment variable `OPENSC_DEBUG` overrides the `debug` setting without editing the file:
+
+```bash
+OPENSC_DEBUG=3 pkcs11-tool --list-objects
+```
+
+### Card driver selection
+
+```text
+app default {
+    card_drivers = internal;
+}
+```
+
+`card_drivers` is an allowlist of drivers to load. The special value `internal` (the default) loads all statically compiled-in drivers. Set the `OPENSC_DRIVER` environment variable to override this at runtime.
+
+### Reader driver configuration
+
+The `reader_driver` block configures the smart card reader layer. The most common reader type is `pcsc`:
+
+```text
+app default {
+    reader_driver pcsc {
+        # Use a specific PC/SC provider library
+        provider_library = /usr/lib/x86_64-linux-gnu/libpcsclite.so.1;
+
+        # Connect to the reader exclusively (default: false)
+        connect_exclusive = false;
+
+        # Enable pinpad if detected (default: true)
+        enable_pinpad = true;
+
+        # Limit APDU sizes for readers with broken capability reporting
+        # max_send_size = 255;
+        # max_recv_size = 256;
+    }
+}
+```
+
+Other supported reader driver names are `ctapi`, `openct`, and `cryptotokenkit` (macOS).
+
+### Card-specific configuration with `card_atr`
+
+You can override or supplement OpenSC's built-in card database by adding a `card_atr` block keyed by the card's ATR (Answer To Reset) hex string:
+
+```text
+card_atr 3b:8f:80:01:80:4f:0c:a0:00:00:03:06:03:00:01:00:00:00:00:6a {
+    # Force the card to use the 'myeid' driver
+    driver = myeid;
+
+    # Override the card name shown in tools
+    name = "My Custom Card";
+
+    # Force T=1 protocol
+    force_protocol = t1;
+}
+```
+
+Use `atrmask` when multiple card variants share a common ATR prefix:
+
+```text
+card_atr 3b:8f:80:01 {
+    atrmask = ff:ff:ff:ff:00:00:00:00;
+    driver = myeid;
+}
+```
+
+### PKCS#15 framework settings
+
+```text
+app default {
+    framework pkcs15 {
+        # Cache public card files on disk to speed up repeated access
+        use_file_caching = public;
+
+        # Cache directory (default: ~/.cache/opensc/ on Unix)
+        # file_cache_dir = /var/cache/opensc;
+
+        # Cache the PIN to avoid re-prompting (default: true)
+        use_pin_caching = true;
+    }
+}
+```
+
+### Secure messaging
+
+If you built OpenSC with `--enable-sm` (the default), you can configure secure messaging profiles:
+
+```text
+app default {
+    secure_messaging default {
+        module_name = opensc-sm.so;
+        mode = transmit;
+    }
+}
+```
+
+## Complete minimal example
+
+The following is a minimal `opensc.conf` suitable for most desktop systems. Copy it to `/etc/opensc.conf` or `~/.config/opensc/opensc.conf` and adjust as needed:
+
+```text
+app default {
+    # Increase to 3–6 when diagnosing problems; set to 0 in production
+    debug = 0;
+
+    reader_driver pcsc {
+        # Uncomment to specify a non-default PC/SC provider
+        # provider_library = /usr/lib/x86_64-linux-gnu/libpcsclite.so.1;
+    }
+
+    framework pkcs15 {
+        use_file_caching = public;
+        use_pin_caching = true;
+    }
+}
+```
+
+## Environment variable reference
+
+| Variable | Equivalent setting | Description |
+|----------|--------------------|-------------|
+| `OPENSC_DEBUG` | `debug` | Sets debug verbosity at runtime |
+| `OPENSC_DRIVER` | `card_drivers` | Overrides the card driver allowlist |
+
+<Warning>
+  Setting `OPENSC_DEBUG` to a high value (4 or above) will log APDU data, which may include sensitive cryptographic material. Do not leave high debug levels enabled in production environments.
+</Warning>

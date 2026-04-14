@@ -1,0 +1,312 @@
+---
+title: "pkcs15-init: smart card personalization tool"
+description: "Use pkcs15-init to erase cards, create PKCS#15 file structures, store PINs, generate on-card key pairs, and load certificates during smart card personalization."
+---
+
+`pkcs15-init` is a smart card personalization utility. It creates the PKCS#15 file structure on a card, installs Security Officer (SO) and user PINs, generates on-card key pairs, imports externally generated keys, stores certificates, and manages existing objects. The structure and behavior of the card is controlled by a *profile*, which you can customize or replace entirely.
+
+<Warning>
+Many `pkcs15-init` operations are destructive and irreversible. Erasing a card (`--erase-card`) permanently removes all data on it. Test your workflow on a development card before using it on a production token.
+</Warning>
+
+## Personalization workflow
+
+Card personalization follows a specific sequence. You must complete each phase before the next.
+
+<Steps>
+<Step title="Erase the card (if supported)">
+  Clear all existing data before creating a new structure:
+
+  ```bash
+  pkcs15-init --erase-card
+  ```
+
+  If the card does not support erasure, `pkcs15-init` will fail at this step. Some cards require transport keys — use `--use-default-transport-keys` to skip the prompt.
+</Step>
+
+<Step title="Create the PKCS#15 structure">
+  Initialize the on-card file system and PKCS#15 application:
+
+  ```bash
+  pkcs15-init --create-pkcs15
+  ```
+
+  You will be prompted for the SO PIN and SO PUK. Press Enter at the SO PIN prompt to skip SO PIN installation. To suppress SO PIN installation entirely:
+
+  ```bash
+  pkcs15-init --create-pkcs15 --no-so-pin
+  ```
+</Step>
+
+<Step title="Store a user PIN">
+  Install a user PIN that will protect private key objects:
+
+  ```bash
+  pkcs15-init --store-pin --id 01 --label "User PIN"
+  ```
+
+  You will be prompted for the PIN value and an optional PUK. The `--id` value is a hex PKCS#15 ID; common values are `01`, `02`, etc.
+</Step>
+
+<Step title="Generate or import keys">
+  Generate a key pair on the card, or import an externally generated key.
+</Step>
+
+<Step title="Store certificates">
+  Upload X.509 certificates corresponding to the keys.
+</Step>
+
+<Step title="Finalize (optional)">
+  Finish the initialization phase on cards that support it:
+
+  ```bash
+  pkcs15-init --finalize
+  ```
+</Step>
+</Steps>
+
+## Key generation
+
+Generate a 2048-bit RSA key pair on the card, protected by the PIN with auth ID `01`:
+
+```bash
+pkcs15-init --generate-key rsa:2048 --auth-id 01
+```
+
+Generate an EC key pair using the P-256 curve:
+
+```bash
+pkcs15-init --generate-key ec:prime256v1 --auth-id 01
+```
+
+Supported EC curves include named curves (`prime256v1`, `secp384r1`, `secp521r1`) and the following parameter-free curves:
+
+| Curve | Accepted names |
+|-------|----------------|
+| Edwards 25519 | `Ed25519` (preferred), `ed25519`, `edwards25519` |
+| Edwards 448 | `Ed448` |
+| Montgomery 25519 | `X25519` (preferred), `cv25519`, `curve25519` |
+| Montgomery 448 | `X448` |
+
+The default RSA key size is 3072 bits if no size is specified.
+
+<Tip>
+When generating or importing a key, omitting `--id` lets the middleware derive the identifier from the key material (SHA1 of the modulus for RSA). This makes it easy to automatically associate related objects (private key, public key, certificate) with the same ID.
+</Tip>
+
+## Importing keys
+
+### Import a private key from a PEM file
+
+```bash
+pkcs15-init --store-private-key key.pem --auth-id 01
+```
+
+The corresponding public key is also stored automatically.
+
+### Import a private key from a DER file
+
+```bash
+pkcs15-init --store-private-key key.der --format der --auth-id 01
+```
+
+### Import from a PKCS#12 file
+
+PKCS#12 files (used by browsers for key and certificate export) can be imported in a single operation:
+
+```bash
+pkcs15-init --store-private-key bundle.p12 --format pkcs12 --auth-id 01
+```
+
+Any X.509 certificates bundled in the file are also stored. Use `--ignore-ca-certificates` to skip CA certificates in the bundle.
+
+### Import a public key
+
+```bash
+pkcs15-init --store-public-key pubkey.pem
+```
+
+Only needed when the corresponding private key was not imported via `pkcs15-init` (public keys are stored automatically when generating or importing private keys).
+
+### Import a secret (symmetric) key
+
+```bash
+pkcs15-init --store-secret-key /dev/urandom \
+  --secret-key-algorithm aes:256 --auth-id 01
+```
+
+The `--secret-key-algorithm` value follows the `algorithm:length-in-bytes` format, e.g. `aes:256`, `des3:24`.
+
+## Storing certificates
+
+Store a PEM-encoded X.509 certificate:
+
+```bash
+pkcs15-init --store-certificate cert.pem
+```
+
+Specify an explicit ID (otherwise derived from the public key):
+
+```bash
+pkcs15-init --store-certificate cert.pem --id 45
+```
+
+Mark the certificate as a CA certificate:
+
+```bash
+pkcs15-init --store-certificate ca.pem --authority
+```
+
+Update an existing certificate object with a renewed certificate:
+
+```bash
+pkcs15-init --update-certificate newcert.pem --id 45
+```
+
+<Warning>
+Take extra care when updating mail decryption certificates. Replacing an incorrect certificate can render encrypted e-mail messages permanently unreadable.
+</Warning>
+
+## Deleting objects
+
+Delete a private key with a given ID:
+
+```bash
+pkcs15-init --delete-objects privkey --id 45
+```
+
+Delete multiple object types at once (comma-separated):
+
+```bash
+pkcs15-init --delete-objects privkey,cert --id 45
+```
+
+Valid types for `--delete-objects`: `privkey`, `pubkey`, `secrkey`, `cert`, `chain`, `data`.
+
+- When deleting `data`, also pass `--application-id`.
+- When deleting `chain`, the certificate chain starting from the given ID is deleted, stopping at a CA certificate that certifies another card object.
+
+## Profile selection
+
+Profiles control the structure and policies of the PKCS#15 application. The default profile is `pkcs15`:
+
+```bash
+pkcs15-init --create-pkcs15 --profile pkcs15
+```
+
+Combine a profile name with options using `+`:
+
+```bash
+pkcs15-init --create-pkcs15 --profile pkcs15+onepin
+```
+
+The `onepin` option installs a single PIN that serves as both the SO PIN and the user PIN for all keys. This simplifies single-user card setups.
+
+You can also load a card-specific profile option with `--card-profile`:
+
+```bash
+pkcs15-init --create-pkcs15 --card-profile mycard
+```
+
+## Options reference
+
+### Initialization
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--erase-card` | `-E` | Erase the card before creating a PKCS#15 structure. Fails if the card does not support erasure. |
+| `--erase-application` *AID* | | Erase the application with the given AID. |
+| `--create-pkcs15` | `-C` | Create the PKCS#15 structure and initialize PINs. |
+| `--finalize` | `-F` | Finish the initialization phase. |
+| `--profile` *name* | `-p` | Load the named general profile (default: `pkcs15`). Combine with options using `+`, e.g. `pkcs15+onepin`. |
+| `--card-profile` *name* | `-c` | Load a card-specific profile option. |
+| `--serial` *SERIAL* | | Set the card serial number. |
+| `--update-last-update` | | Update the `lastUpdate` attribute in tokenInfo. |
+| `--sanity-check` | | Perform a card-specific sanity check and possible update. |
+| `--use-default-transport-keys` | `-T` | Skip transport key prompts and use default keys from the card driver. |
+
+### PIN management
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--store-pin` | `-P` | Store a new PIN/PUK on the card. |
+| `--no-so-pin` | | Skip SO PIN installation; do not prompt for it. |
+| `--auth-id` *id* | `-a` | ID of the PIN to use or create (hex, e.g. `01`). |
+| `--puk-id` *ID* | | ID of the PUK to use or create. |
+| `--pin` *pin* | | User PIN value. Use `env:VARIABLE` to read from an environment variable. |
+| `--puk` *puk* | | User PUK value. |
+| `--so-pin` *pin* | | SO PIN value. |
+| `--so-puk` *puk* | | SO PUK value. |
+| `--use-pinpad` | | Do not prompt for PINs; use a PIN pad reader. |
+
+<Warning>
+Passing PINs on the command line is a security risk — other users can read command arguments with `ps`. Prefer `env:VARIABLE` or interactive prompting.
+</Warning>
+
+### Key generation and import
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--generate-key` *keyspec* | `-G` | Generate a key on the card. *keyspec* format: `algorithm:params`, e.g. `rsa:2048`, `ec:prime256v1`. |
+| `--store-private-key` *file* | `-S` | Import a private key from a file (PEM, DER, or PKCS#12). |
+| `--store-public-key` *file* | | Import a public key from a file (PEM by default). |
+| `--store-secret-key` *file* | | Import a secret key from a file (raw binary). Requires `--secret-key-algorithm`. |
+| `--secret-key-algorithm` *spec* | | Algorithm and length for secret key import, e.g. `aes:256`, `des3:24`. |
+| `--format` *fmt* | | Key file format: `pem` (default), `der`, `pkcs12`. |
+| `--passphrase` *pass* | | Passphrase to unlock an encrypted key file. |
+| `--output-file` *file* | `-o` | Write the public portion of a generated key to a file. |
+| `--extractable` | | Store the private key as extractable. |
+| `--insecure` | | Do not require a PIN for private key access. |
+| `--md-container-guid` *GUID* | | Set the Minidriver container GUID for a new key. |
+
+### Certificate operations
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--store-certificate` *file* | `-X` | Store a PEM-encoded X.509 certificate on the card. |
+| `--update-certificate` *file* | `-U` | Replace the certificate with the given `--id`. |
+| `--authority` | | Mark the certificate as a CA certificate. |
+| `--ignore-ca-certificates` | | When importing PKCS#12, skip CA certificates in the bundle. |
+| `--update-existing` | | Store or update an existing certificate object. |
+| `--store-data` *file* | `-W` | Store a data object. |
+
+### Object labeling and identification
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--id` *id* | | Hex ID for the object to create or operate on. |
+| `--label` *LABEL* | | Label for a PIN, key, certificate, or data object. Also used to delete by label. |
+| `--puk-label` *LABEL* | | Label for the PUK object. |
+| `--public-key-label` *LABEL* | | Label for the public key (use with `--generate-key`). |
+| `--cert-label` *LABEL* | | Label for the user certificate (use with `--store-private-key`). |
+| `--application-name` *arg* | | Application name for data objects (use with `--store-data`). |
+| `--application-id` *ID* | | Application ID (required when deleting data objects). |
+| `--aid` *AID* | | Hex AID of the on-card PKCS#15 application to bind to. |
+
+### Key usage
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--key-usage` *arg* | `-u` | Comma-separated X.509 key usage values: `digitalSignature`, `nonRepudiation`, `keyEncipherment`, `dataEncipherment`, `keyAgreement`, `keyCertSign`, `cRLSign`. Aliases: `sign` = `digitalSignature,keyCertSign,cRLSign`; `decrypt` = `keyEncipherment,dataEncipherment`. |
+| `--user-consent` *arg* | | Set user-consent value. A positive integer specifies how many accesses are allowed before re-authentication is required; `0` disables re-authentication. |
+
+### Card and reader selection
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--reader` *arg* | `-r` | Reader number to use. Defaults to the first reader with a card. Pass an ATR string to select by card type. |
+| `--wait` | `-w` | Wait for a card insertion before proceeding. |
+| `--change-attributes` *arg* | `-A` | Change an attribute on an existing object. *arg* is one of `privkey`, `pubkey`, `secrkey`, `cert`, or `data`. Currently only `--label` can be changed. |
+
+### General
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--verbose` | `-v` | Increase verbosity. Repeat to enable library-level debug output. |
+| `--version` | | Print the OpenSC package version. |
+| `--help` | `-h` | Display the help message. |
+
+## See also
+
+- [pkcs15-tool](/tools/pkcs15-tool) — Read and list objects from a personalized card.
+- [pkcs15-crypt](/tools/pkcs15-crypt) — Perform cryptographic operations using card keys.

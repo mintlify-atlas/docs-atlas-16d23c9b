@@ -1,0 +1,205 @@
+---
+title: "openpgp-tool: inspect and manage OpenPGP cards"
+description: "Inspect and manage OpenPGP smart card configuration, key information, and data objects on OpenPGP v1/v2/v3, GnuK, and YubiKey tokens."
+---
+
+`openpgp-tool` is a command-line utility for accessing and managing data on OpenPGP smart cards and compatible tokens. It reaches into card-specific data objects that are not exposed through standard PKCS#15 interfaces, making it the right tool when you need to inspect raw card attributes, generate keys directly on the card, manage PINs, or pass card data to external programs via environment variables.
+
+## Supported cards
+
+`openpgp-tool` works with cards and tokens that implement the OpenPGP card specification:
+
+- OpenPGP card v1.1, v2.0, v2.1, and v3.x
+- GnuK (FST-01 and similar)
+- GPF CryptoStick v1.x
+- YubiKey with OpenPGP applet
+
+## Reading card information
+
+Use these options to inspect what is on the card without modifying anything.
+
+```bash
+# Show general card information (AID, version, serial number)
+openpgp-tool --card-info
+
+# Show card holder information (name, language, sex)
+openpgp-tool --user-info
+
+# Show key information for all three key slots
+openpgp-tool --key-info
+```
+
+You can combine multiple read operations in a single invocation:
+
+```bash
+openpgp-tool --card-info --user-info --key-info
+```
+
+### Output format
+
+By default, values are printed in a human-readable form. Use `--pretty` for formatted output or `--raw` to print the bytes exactly as stored on the card.
+
+```bash
+openpgp-tool --card-info --pretty
+openpgp-tool --card-info --raw
+```
+
+## Accessing private data objects
+
+The OpenPGP card specification defines four private data objects (DO 0101–0104). Use `--do` to read them:
+
+```bash
+# Read private data object DO 0101
+openpgp-tool --do 1
+
+# Equivalent longer forms
+openpgp-tool --do 101
+openpgp-tool --do 0101
+```
+
+The argument accepts the values `1`, `2`, `3`, or `4` (or the prefixed forms `10x` / `010x`).
+
+## Generating keys on the card
+
+`openpgp-tool` can generate RSA or elliptic-curve key pairs directly on the card. Keys are identified by slot number: `1` (signature), `2` (encryption), or `3` (authentication).
+
+```bash
+# Generate a 2048-bit RSA key in slot 1 (default type)
+openpgp-tool --gen-key 1
+
+# Generate a 4096-bit RSA key in slot 2
+openpgp-tool --gen-key 2 --key-type rsa4096
+
+# Generate an elliptic-curve key in slot 3
+openpgp-tool --gen-key 3 --key-type ed25519
+```
+
+The `--key-type` option accepts:
+- `rsa` or `rsa2048` — RSA 2048-bit (default)
+- `rsa`_LENGTH_ — RSA with a custom bit length, e.g. `rsa3072`, `rsa4096`
+- EC curve names as supported by the card (e.g. `nistp256`, `ed25519`)
+
+<Warning>
+  Generating a new key in a slot destroys the existing key in that slot. There is no recovery. Back up any data encrypted to the old key before proceeding.
+</Warning>
+
+## Deleting keys
+
+```bash
+# Delete the key in slot 1
+openpgp-tool --del-key 1
+
+# Delete all three keys
+openpgp-tool --del-key all
+```
+
+## PIN management
+
+### Verifying a PIN
+
+```bash
+# Verify the user PIN (CHV1)
+openpgp-tool --verify CHV1
+
+# Verify the signing PIN (CHV2)
+openpgp-tool --verify CHV2
+
+# Verify the admin PIN (CHV3)
+openpgp-tool --verify CHV3
+```
+
+### Supplying a PIN on the command line
+
+The `--pin` option accepts a PIN value directly or from an environment variable:
+
+```bash
+# Supply PIN directly (not recommended on shared systems)
+openpgp-tool --verify CHV1 --pin 123456
+
+# Supply PIN from an environment variable (preferred)
+export OPGP_PIN=123456
+openpgp-tool --verify CHV1 --pin env:OPGP_PIN
+```
+
+<Warning>
+  Passing a PIN on the command line exposes it to other users on the same system via tools like `ps`. Prefer the `env:VARIABLE` form or interactive prompting on shared or production systems.
+</Warning>
+
+## Erasing the card
+
+`--erase` performs a factory reset, removing all keys, certificates, and data objects and restoring the card to its initial state.
+
+```bash
+openpgp-tool --erase
+```
+
+<Warning>
+  Erasing a card is irreversible. All keys and data are permanently destroyed.
+</Warning>
+
+## Passing card data to other programs
+
+The `--exec` option runs an external program with card data exported as environment variables. This lets you integrate card attributes into scripts without parsing tool output manually.
+
+```bash
+# Run a custom script with card data in the environment
+openpgp-tool --card-info --user-info --exec /usr/local/bin/my-script.sh
+```
+
+Card attributes such as the card serial number, key fingerprints, and holder information are made available as named environment variables that the child process can read directly.
+
+<Tip>
+  Combine `--exec` with GnuPG wrapper scripts to automate key management workflows that require card metadata alongside cryptographic operations.
+</Tip>
+
+## Integration with GnuPG
+
+`openpgp-tool` complements GnuPG's `gpg --card-status` and `gpg --card-edit` commands. While GnuPG manages signing, encryption, and authentication operations, `openpgp-tool` provides lower-level access to the card's data objects and is useful when GnuPG's scdaemon is not running or when you need programmatic access to card attributes.
+
+If GnuPG has exclusive access to the card reader via `scdaemon`, you may need to stop it before running `openpgp-tool`:
+
+```bash
+gpgconf --kill scdaemon
+openpgp-tool --card-info
+```
+
+## Reader selection
+
+```bash
+# Use reader number 1 instead of the default (reader 0)
+openpgp-tool --reader 1
+
+# Select a reader by ATR
+openpgp-tool --reader "3B:DA:18:FF:81:B1:FE:75:1F:03:00:31:C5:73:C0:01:40:00:90:00:0C"
+
+# Wait for a card to be inserted before proceeding
+openpgp-tool --card-info --wait
+```
+
+## All options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--card-info` | `-C` | Show card information |
+| `--user-info` | `-U` | Show card holder information |
+| `--key-info` | `-K` | Show information about keys on the card |
+| `--do` _arg_ | `-d` _arg_ | Dump private data object (1–4) |
+| `--gen-key` _arg_ | `-G` _arg_ | Generate key in slot 1, 2, or 3 |
+| `--key-type` _keytype_ | `-t` _keytype_ | Key type for generation (e.g. `rsa2048`, `rsa4096`) |
+| `--del-key` _arg_ | | Delete key in slot 1, 2, 3, or `all` |
+| `--verify` _pintype_ | | Verify PIN: `CHV1`, `CHV2`, or `CHV3` |
+| `--pin` _pin_ | | PIN value or `env:VARIABLE` |
+| `--erase` | `-E` | Erase (factory reset) the card |
+| `--exec` _prog_ | `-x` _prog_ | Execute program with card data in environment |
+| `--pretty` | | Print values in pretty format |
+| `--raw` | | Print values in raw (byte) format |
+| `--reader` _arg_ | `-r` _arg_ | Reader number or ATR |
+| `--wait` | `-w` | Wait for a card to be inserted |
+| `--verbose` | `-v` | Increase verbosity; repeat for debug output |
+| `--version` | `-V` | Print version and exit |
+| `--help` | `-h` | Print help message |
+
+## See also
+
+- [`pkcs15-tool`](/tools/pkcs15-tool) — list and export PKCS#15 objects from any OpenSC-supported card
+- [`opensc-tool`](/tools/opensc-tool) — low-level card inspection and APDU transmission
